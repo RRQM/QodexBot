@@ -61,6 +61,7 @@ jobs:
           Write-Host "Version changed: $versionChanged"
           Write-Host "Release exists: $releaseExists"
           Write-Host "Publish release: $shouldPublish"
+          exit 0
 
       - name: Set up .NET 10
         if: steps.version.outputs.changed == 'true'
