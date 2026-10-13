@@ -32,9 +32,38 @@ internal sealed partial class AdminApiController : SingletonRpcServer
     public Task GetSettings(IWebApiCallContext callContext) =>
         this.HandleAsync(callContext, async () =>
         {
-            await this.WriteJsonAsync(callContext, 200, this.m_settingsStore.GetView(),
-                WebJsonContext.Default.BotSettingsView).ConfigureAwait(false);
+            var botId = GetQuery(callContext, "botId");
+            var view = string.IsNullOrEmpty(botId) ? this.m_settingsStore.GetView() : this.m_settingsStore.GetBot(botId);
+            if (view is null) throw new ArgumentException("找不到指定机器人。");
+            await this.WriteJsonAsync(callContext, 200, view, WebJsonContext.Default.BotSettingsView).ConfigureAwait(false);
         });
+
+    [Router("/api/bots")]
+    [WebApi(Method = HttpMethodType.Get)]
+    public Task GetBots(IWebApiCallContext callContext) => this.HandleAsync(callContext, async () =>
+        await this.WriteJsonAsync(callContext, 200, this.m_settingsStore.GetBots().ToList(),
+            WebJsonContext.Default.ListBotSettingsView).ConfigureAwait(false));
+
+    [Router("/api/bots")]
+    [WebApi(Method = HttpMethodType.Post)]
+    public Task AddBot(IWebApiCallContext callContext) => this.HandleAsync(callContext, async () =>
+    {
+        var body = await callContext.HttpContext.Request.GetContentAsync(CancellationToken.None).ConfigureAwait(false);
+        var input = JsonSerializer.Deserialize(Encoding.UTF8.GetString(body.Span), WebJsonContext.Default.BotCreateInput);
+        var view = await this.m_settingsStore.AddBotAsync(input?.Name ?? "", CancellationToken.None).ConfigureAwait(false);
+        await this.WriteJsonAsync(callContext, 200, view, WebJsonContext.Default.BotSettingsView).ConfigureAwait(false);
+    });
+
+    [Router("/api/bots/delete")]
+    [WebApi(Method = HttpMethodType.Post)]
+    public Task DeleteBot(IWebApiCallContext callContext) => this.HandleAsync(callContext, async () =>
+    {
+        var body = await callContext.HttpContext.Request.GetContentAsync(CancellationToken.None).ConfigureAwait(false);
+        var input = JsonSerializer.Deserialize(Encoding.UTF8.GetString(body.Span), WebJsonContext.Default.BotDeleteInput);
+        if (input is null || string.IsNullOrWhiteSpace(input.BotId)) throw new ArgumentException("机器人 ID 缺失。");
+        await this.m_settingsStore.DeleteBotAsync(input.BotId, CancellationToken.None).ConfigureAwait(false);
+        await this.WriteJsonAsync(callContext, 200, new ApiErrorResponse("已删除。"), WebJsonContext.Default.ApiErrorResponse).ConfigureAwait(false);
+    });
 
     /// <summary>
     /// 保存机器人设置并通知运行中的机器人应用变更。
@@ -76,7 +105,9 @@ internal sealed partial class AdminApiController : SingletonRpcServer
     public Task GetStatus(IWebApiCallContext callContext) =>
         this.HandleAsync(callContext, async () =>
         {
-            var response = new ApiStatusResponse(this.m_settingsStore.RuntimeStatus, this.m_settingsStore.GetView(),
+            var botId = GetQuery(callContext, "botId");
+            var view = string.IsNullOrEmpty(botId) ? this.m_settingsStore.GetView() : this.m_settingsStore.GetBot(botId);
+            var response = new ApiStatusResponse(string.IsNullOrEmpty(botId) ? this.m_settingsStore.RuntimeStatus : this.m_settingsStore.GetBotRuntimeStatus(botId), view ?? this.m_settingsStore.GetView(),
                 this.m_settingsStore.FilePath);
             await this.WriteJsonAsync(callContext, 200, response, WebJsonContext.Default.ApiStatusResponse)
                 .ConfigureAwait(false);
@@ -90,7 +121,9 @@ internal sealed partial class AdminApiController : SingletonRpcServer
     public Task StartQqLogin(IWebApiCallContext callContext) =>
         this.HandleAsync(callContext, async () =>
         {
-            var session = await this.m_qrLoginService.StartAsync(CancellationToken.None).ConfigureAwait(false);
+            var body = await callContext.HttpContext.Request.GetContentAsync(CancellationToken.None).ConfigureAwait(false);
+            var input = JsonSerializer.Deserialize(Encoding.UTF8.GetString(body.Span), WebJsonContext.Default.QqQrLoginStartInput);
+            var session = await this.m_qrLoginService.StartAsync(input?.BotId ?? "", CancellationToken.None).ConfigureAwait(false);
             await this.WriteJsonAsync(callContext, 200, session, WebJsonContext.Default.QqQrLoginView).ConfigureAwait(false);
         });
 
@@ -142,7 +175,8 @@ internal sealed partial class AdminApiController : SingletonRpcServer
             long? beforeId = long.TryParse(query.Get("beforeId"), out var parsedBeforeId) ? parsedBeforeId : null;
             var limit = int.TryParse(query.Get("limit"), out var parsedLimit) ? parsedLimit : 50;
             var userOpenId = query.Get("userOpenId");
-            var page = this.m_conversationStore.GetPage(beforeId, limit, userOpenId);
+            var botId = query.Get("botId");
+            var page = this.m_conversationStore.GetPage(beforeId, limit, userOpenId, botId: botId);
             await this.WriteJsonAsync(callContext, 200, page, WebJsonContext.Default.ConversationPage)
                 .ConfigureAwait(false);
         });
@@ -175,6 +209,14 @@ internal sealed partial class AdminApiController : SingletonRpcServer
                 await this.WriteJsonAsync(callContext, 500, new ApiErrorResponse("服务器处理请求失败。"),
                     WebJsonContext.Default.ApiErrorResponse).ConfigureAwait(false);
         }
+    }
+
+    private string GetQuery(IWebApiCallContext callContext, string name)
+    {
+        var requestUrl = callContext.HttpContext.Request.URL;
+        if (!Uri.TryCreate(requestUrl, UriKind.Absolute, out var uri))
+            uri = new Uri(new Uri($"http://127.0.0.1:{this.m_activePort}/"), requestUrl);
+        return HttpUtility.ParseQueryString(uri.Query).Get(name) ?? string.Empty;
     }
 
     private async Task WriteJsonAsync<T>(IWebApiCallContext callContext, int statusCode, T body,

@@ -9,7 +9,7 @@ internal sealed class CodexAppServer : IAsyncDisposable
     public const string DefaultModel = "gpt-6-luna";
     private readonly string _cliScript = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "npm", "node_modules", "@openai", "codex", "bin", "codex.js");
-    private readonly string _workDirectory = Path.Combine(Path.GetTempPath(), "QodexBot");
+    private readonly string _workDirectory;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> _pending = new();
     private readonly ConcurrentDictionary<string, byte> _liveThreads = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -26,6 +26,11 @@ internal sealed class CodexAppServer : IAsyncDisposable
     private string? _activeTurnId;
     private string? _mcpPipeName;
     private ReplyContext? _activeToolContext;
+    public CodexAppServer(string botId = "default")
+    {
+        var safeBotId = string.Concat(botId.Select(character => char.IsLetterOrDigit(character) || character is '-' or '_' ? character : '_'));
+        _workDirectory = Path.Combine(Path.GetTempPath(), "QodexBot", "bots", safeBotId);
+    }
     public ReplyContext? ActiveToolContext => Volatile.Read(ref _activeToolContext);
     public string? DefaultThreadId => _threadId;
     public string WorkDirectory => _workDirectory;

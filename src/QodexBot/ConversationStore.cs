@@ -50,14 +50,14 @@ internal sealed class ConversationStore
     /// 追加一条对话事件并立即写入本机文件。
     /// </summary>
     public async Task AppendAsync(string userOpenId, string kind, string content, int imageCount = 0,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, string botId = "default")
     {
         await this.m_writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             long id;
             lock (this.m_syncRoot) id = ++this.m_nextId;
-            var record = new ConversationRecord(id, DateTimeOffset.UtcNow, userOpenId, kind, content, imageCount);
+            var record = new ConversationRecord(id, DateTimeOffset.UtcNow, userOpenId, kind, content, imageCount, botId);
             var directory = Path.GetDirectoryName(this.m_filePath);
             if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
             await File.AppendAllTextAsync(this.m_filePath,
@@ -74,12 +74,13 @@ internal sealed class ConversationStore
     /// <summary>
     /// 读取按时间正序排列的一页对话事件。
     /// </summary>
-    public ConversationPage GetPage(long? beforeId, int limit, string? userOpenId, bool exactUserMatch = false)
+    public ConversationPage GetPage(long? beforeId, int limit, string? userOpenId, bool exactUserMatch = false, string? botId = null)
     {
         limit = Math.Clamp(limit, 1, 100);
         lock (this.m_syncRoot)
         {
             IEnumerable<ConversationRecord> query = this.m_records;
+            if (!string.IsNullOrWhiteSpace(botId)) query = query.Where(record => record.BotId == botId);
             if (beforeId.HasValue) query = query.Where(record => record.Id < beforeId.Value);
             if (!string.IsNullOrWhiteSpace(userOpenId))
                 query = query.Where(record => exactUserMatch
@@ -92,14 +93,15 @@ internal sealed class ConversationStore
         }
     }
 
-    public string? GetLatestContent(string userOpenId, string kind)
+    public string? GetLatestContent(string userOpenId, string kind, string? botId = null)
     {
         lock (this.m_syncRoot)
-            return this.m_records.LastOrDefault(record => record.UserOpenId == userOpenId && record.Kind == kind)?.Content;
+            return this.m_records.LastOrDefault(record => record.UserOpenId == userOpenId && record.Kind == kind &&
+                (string.IsNullOrWhiteSpace(botId) || record.BotId == botId))?.Content;
     }
 }
 
 internal sealed record ConversationRecord(long Id, DateTimeOffset Timestamp, string UserOpenId, string Kind,
-    string Content, int ImageCount);
+    string Content, int ImageCount, string BotId = "default");
 
 internal sealed record ConversationPage(IReadOnlyList<ConversationRecord> Items, bool HasMore, long? NextBeforeId);

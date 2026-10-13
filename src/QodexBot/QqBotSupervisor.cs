@@ -1,89 +1,84 @@
 internal sealed class QqBotSupervisor(
     HttpClient http,
     BotSettingsStore settingsStore,
-    CodexAppServer codex,
-    LocalToolIpcServer mcp,
     ConversationStore conversationStore,
     BotSessionStore sessionStore)
 {
-    private readonly BotSettingsStore m_settingsStore = settingsStore;
-    private ActiveBot? m_activeBot;
+    private readonly Dictionary<string, ActiveBot> m_activeBots = new(StringComparer.Ordinal);
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         try
         {
-            await this.ApplySettingsAsync(this.m_settingsStore.GetBotConfig(), cancellationToken).ConfigureAwait(false);
-            await foreach (var config in this.m_settingsStore.ReadChangesAsync(cancellationToken).ConfigureAwait(false))
+            await this.ReconcileAsync(cancellationToken).ConfigureAwait(false);
+            await foreach (var _ in settingsStore.ReadChangesAsync(cancellationToken).ConfigureAwait(false))
+                await this.ReconcileAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        finally
+        {
+            foreach (var botId in m_activeBots.Keys.ToArray()) await StopBotAsync(botId).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ReconcileAsync(CancellationToken cancellationToken)
+    {
+        var configs = settingsStore.GetBotConfigs().ToDictionary(item => item.BotId, StringComparer.Ordinal);
+        foreach (var (botId, active) in m_activeBots.ToArray())
+        {
+            if (configs.TryGetValue(botId, out var current) && current == active.Config) continue;
+            await StopBotAsync(botId).ConfigureAwait(false);
+        }
+
+        if (configs.Count == 0)
+            settingsStore.SetRuntimeStatus("请在管理页添加机器人并扫码绑定 QQ。");
+        foreach (var (botId, config) in configs)
+        {
+            if (m_activeBots.ContainsKey(botId)) continue;
+            var active = new ActiveBot(config);
+            m_activeBots.Add(botId, active);
+            try
             {
-                await this.ApplySettingsAsync(config, cancellationToken).ConfigureAwait(false);
+                active.Codex = new CodexAppServer(botId);
+                active.Mcp = new LocalToolIpcServer();
+                await active.Mcp.StartAsync().ConfigureAwait(false);
+                var bot = new QqBotClient(http, config, active.Codex, active.Mcp, conversationStore, sessionStore,
+                    () => settingsStore.GetBot(config.BotId)?.CommandBindings ?? BotSettingsStore.DefaultCommandBindings,
+                    () => settingsStore.GetBotRuntimeStatus(botId), status => settingsStore.SetBotRuntimeStatus(botId, status));
+                active.RunTask = bot.RunAsync(active.Cancellation.Token);
+                settingsStore.SetBotRuntimeStatus(botId, "正在使用已保存的设置启动 QQ 机器人。");
+                Console.WriteLine($"启动机器人：{config.Name} ({botId})");
+            }
+            catch (Exception ex)
+            {
+                settingsStore.SetBotRuntimeStatus(botId, $"启动机器人失败：{ex.Message}");
+                Console.Error.WriteLine($"启动机器人失败 ({botId})：{ex.Message}");
+                await StopBotAsync(botId).ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
+    }
+
+    private async Task StopBotAsync(string botId)
+    {
+        if (!m_activeBots.Remove(botId, out var active)) return;
+        active.Cancellation.Cancel();
+        try { await active.RunTask.ConfigureAwait(false); }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { Console.Error.WriteLine($"停止机器人 {botId} 失败：{ex.Message}"); }
         finally
         {
-            await this.StopBotAsync().ConfigureAwait(false);
+            active.Cancellation.Dispose();
+            if (active.Mcp is not null) await active.Mcp.DisposeAsync().ConfigureAwait(false);
+            if (active.Codex is not null) await active.Codex.DisposeAsync().ConfigureAwait(false);
         }
     }
 
-    private async Task ApplySettingsAsync(BotConfig? config, CancellationToken cancellationToken)
+    private sealed class ActiveBot(BotConfig config)
     {
-        await this.StopBotAsync().ConfigureAwait(false);
-        if (cancellationToken.IsCancellationRequested) return;
-
-        if (config is null)
-        {
-            var view = this.m_settingsStore.GetView();
-            this.m_settingsStore.SetRuntimeStatus(string.IsNullOrWhiteSpace(view.ConfigurationError)
-                ? "请在管理页使用 QQ 扫码绑定机器人。"
-                : $"配置有误：{view.ConfigurationError}");
-            return;
-        }
-
-        try
-        {
-            var botCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var bot = new QqBotClient(http, config, codex, mcp, conversationStore, sessionStore,
-                this.m_settingsStore.GetCommandBindings, () => this.m_settingsStore.RuntimeStatus,
-                this.m_settingsStore.SetRuntimeStatus);
-            var runTask = bot.RunAsync(botCancellation.Token);
-            this.m_activeBot = new ActiveBot(botCancellation, runTask);
-            this.m_settingsStore.SetRuntimeStatus("正在使用已保存的设置启动 QQ 机器人。");
-        }
-        catch (Exception ex)
-        {
-            this.m_settingsStore.SetRuntimeStatus($"启动机器人失败：{ex.Message}");
-            Console.Error.WriteLine($"启动机器人失败：{ex.Message}");
-        }
+        public BotConfig Config { get; } = config;
+        public CancellationTokenSource Cancellation { get; } = new();
+        public CodexAppServer? Codex { get; set; }
+        public LocalToolIpcServer? Mcp { get; set; }
+        public Task RunTask { get; set; } = Task.CompletedTask;
     }
-
-    private async Task StopBotAsync()
-    {
-        var activeBot = this.m_activeBot;
-        this.m_activeBot = null;
-        if (activeBot is null) return;
-
-        activeBot.Cancellation.Cancel();
-        try
-        {
-            await activeBot.RunTask.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"停止旧机器人实例失败：{ex.Message}");
-        }
-        finally
-        {
-            activeBot.Cancellation.Dispose();
-        }
-    }
-
-    private sealed record ActiveBot(
-        CancellationTokenSource Cancellation,
-        Task RunTask);
 }

@@ -198,7 +198,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
                 var stopped = false;
                 if (_activeRequests.TryGetValue(userOpenId, out var active))
                 {
-                    var session = await sessionStore.GetActiveAsync(userOpenId, cancellationToken);
+                    var session = await sessionStore.GetActiveAsync(SessionOwner(userOpenId), cancellationToken);
                     if (session is not null)
                     {
                         try { await codex.InterruptTurnAsync(session.ThreadId, cancellationToken); stopped = true; }
@@ -242,7 +242,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
         CancellationToken cancellationToken)
     {
         var bindings = getCommandBindings();
-        var userId = context.UserOpenId;
+        var userId = SessionOwner(context.UserOpenId);
         string response;
         switch (command)
         {
@@ -339,7 +339,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
                 break;
             case "recent":
             {
-                var page = conversationStore.GetPage(null, 12, userId, exactUserMatch: true);
+                var page = conversationStore.GetPage(null, 12, context.UserOpenId, exactUserMatch: true, botId: config.BotId);
                 var recent = page.Items.Where(item => item.Kind is "user" or "assistant").TakeLast(8).ToArray();
                 response = recent.Length == 0 ? "暂无对话记录。" : string.Join("\n", recent.Select(item =>
                     $"{(item.Kind == "user" ? "你" : "Codex")}: {Truncate(item.Content, 100)}"));
@@ -356,17 +356,17 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
                 break;
             case "retry":
                 if (!_lastRequests.TryGetValue(userId, out var previous))
-                    previous = conversationStore.GetLatestContent(userId, "user") ?? string.Empty;
+                    previous = conversationStore.GetLatestContent(context.UserOpenId, "user", config.BotId) ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(previous)) { response = "没有可重试的请求。"; break; }
                 await ProcessCodexRequestAsync(context, previous, cancellationToken);
-                await this.RecordConversationAsync(userId, "command", "retry", cancellationToken: cancellationToken);
+                await this.RecordConversationAsync(context.UserOpenId, "command", "retry", cancellationToken: cancellationToken);
                 return;
             default:
                 response = "该动作尚未实现。";
                 break;
         }
         await SendTextReplyAsync(context, response, cancellationToken);
-        await this.RecordConversationAsync(userId, "command", $"{command}: {argument}".TrimEnd(), cancellationToken: cancellationToken);
+        await this.RecordConversationAsync(context.UserOpenId, "command", $"{command}: {argument}".TrimEnd(), cancellationToken: cancellationToken);
     }
 
     private static readonly IReadOnlyDictionary<string, string> CommandLabels = new Dictionary<string, string>
@@ -380,9 +380,9 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
 
     private async Task ProcessCodexRequestAsync(ReplyContext context, string content, CancellationToken cancellationToken)
     {
-        var userId = context.UserOpenId;
+        var userId = SessionOwner(context.UserOpenId);
         WriteLogBlock($"QQ 输入 ({userId})", content);
-        await this.RecordConversationAsync(userId, "user", content, cancellationToken: cancellationToken);
+        await this.RecordConversationAsync(context.UserOpenId, "user", content, cancellationToken: cancellationToken);
         var session = await sessionStore.EnsureAsync(userId, codex.DefaultThreadId ??
             throw new InvalidOperationException("Codex 会话尚未启动。"), "默认会话", codex.CreateThreadAsync, cancellationToken);
         session = await this.ResumeOrRecreateSessionAsync(userId, session, cancellationToken);
@@ -400,8 +400,8 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
                 ? "（app-server 此轮未提供推理摘要）" : turnReply.ReasoningSummary);
             WriteLogBlock("Codex 完整输出", reply);
             if (!string.IsNullOrWhiteSpace(turnReply.ReasoningSummary))
-                await this.RecordConversationAsync(userId, "reasoning", turnReply.ReasoningSummary, cancellationToken: cancellationToken);
-            await this.RecordConversationAsync(userId, "assistant", reply, turnReply.Images.Count, cancellationToken);
+                await this.RecordConversationAsync(context.UserOpenId, "reasoning", turnReply.ReasoningSummary, cancellationToken: cancellationToken);
+            await this.RecordConversationAsync(context.UserOpenId, "assistant", reply, turnReply.Images.Count, cancellationToken);
             await SendTurnReplyAsync(context, reply, turnReply.Images, cancellationToken);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -448,6 +448,8 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
         }
         action = string.Empty; argument = string.Empty; return false;
     }
+
+    private string SessionOwner(string userOpenId) => $"{config.BotId}:{userOpenId}";
 
     private static string Truncate(string text, int length) => text.Length <= length ? text : text[..(length - 1)] + "…";
 
@@ -567,7 +569,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
         {
             var path = request.Argument;
             if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("path 参数不能为空。");
-            var outbox = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "QodexBot", "qq-outbox"));
+            var outbox = Path.GetFullPath(Path.Combine(codex.WorkDirectory, "qq-outbox"));
             Directory.CreateDirectory(outbox);
             if ((File.GetAttributes(outbox) & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidOperationException("图片输出目录不能是符号链接或重解析点。");
@@ -688,7 +690,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
     {
         try
         {
-            await conversationStore.AppendAsync(userOpenId, kind, content, imageCount, cancellationToken).ConfigureAwait(false);
+            await conversationStore.AppendAsync(userOpenId, kind, content, imageCount, cancellationToken, config.BotId).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

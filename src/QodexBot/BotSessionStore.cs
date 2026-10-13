@@ -13,7 +13,8 @@ internal sealed class BotSessionStore(string filePath)
         try
         {
             var json = await File.ReadAllTextAsync(this.m_filePath, cancellationToken).ConfigureAwait(false);
-            this.m_sessions = JsonSerializer.Deserialize(json, AppJsonContext.Default.ListBotSession) ?? [];
+            this.m_sessions = (JsonSerializer.Deserialize(json, AppJsonContext.Default.ListBotSession) ?? [])
+                .Select(item => item with { Owner = item.Owner.Contains(":", StringComparison.Ordinal) ? item.Owner : $"default:{item.Owner}" }).ToList();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {

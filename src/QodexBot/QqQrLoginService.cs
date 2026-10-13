@@ -17,11 +17,12 @@ internal sealed class QqQrLoginService(BotSettingsStore settingsStore, HttpClien
     private readonly BotSettingsStore m_settingsStore = settingsStore;
     private readonly HttpClient m_httpClient = httpClient;
 
-    public async Task<QqQrLoginView> StartAsync(CancellationToken cancellationToken)
+    public async Task<QqQrLoginView> StartAsync(string botId, CancellationToken cancellationToken)
     {
+        if (m_settingsStore.GetBot(botId) is null) throw new ArgumentException("机器人不存在。");
         var sessionId = Guid.NewGuid().ToString("N");
         var bindTask = await this.CreateBindTaskAsync(cancellationToken).ConfigureAwait(false);
-        var session = new LoginSession(sessionId, bindTask.TaskId, bindTask.Key, CreateQrSvg(BuildConnectUrl(bindTask.TaskId)));
+        var session = new LoginSession(sessionId, botId, bindTask.TaskId, bindTask.Key, CreateQrSvg(BuildConnectUrl(bindTask.TaskId)));
         if (!this.m_sessions.TryAdd(sessionId, session))
             throw new InvalidOperationException("无法创建扫码会话。");
 
@@ -93,7 +94,7 @@ internal sealed class QqQrLoginService(BotSettingsStore settingsStore, HttpClien
                     if (string.IsNullOrWhiteSpace(result.AppId) || string.IsNullOrWhiteSpace(appSecret))
                         throw new InvalidOperationException("扫码未返回有效的机器人凭据。");
 
-                    await this.m_settingsStore.SaveQrCredentialsAsync(result.AppId, appSecret, session.Cancellation.Token)
+                    await this.m_settingsStore.SaveQrCredentialsAsync(session.BotId, result.AppId, appSecret, session.Cancellation.Token)
                         .ConfigureAwait(false);
                     lock (session.Sync)
                         if (!session.IsTerminal)
@@ -262,10 +263,11 @@ internal sealed class QqQrLoginService(BotSettingsStore settingsStore, HttpClien
     private sealed record BindTask(string TaskId, string Key);
     private sealed record PollResult(BindStatus Status, string AppId, string EncryptedSecret);
 
-    private sealed class LoginSession(string id, string taskId, string key, string qrSvg)
+    private sealed class LoginSession(string id, string botId, string taskId, string key, string qrSvg)
     {
         public object Sync { get; } = new();
         public string Id { get; } = id;
+        public string BotId { get; } = botId;
         public string TaskId { get; set; } = taskId;
         public string Key { get; set; } = key;
         public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
@@ -284,3 +286,6 @@ internal sealed class QqQrLoginService(BotSettingsStore settingsStore, HttpClien
 internal sealed record QqQrLoginView(string SessionId, string Status, string Message, string? QrSvg);
 
 internal sealed record QqQrLoginCancelInput(string SessionId);
+internal sealed record QqQrLoginStartInput(string BotId);
+internal sealed record BotCreateInput(string Name);
+internal sealed record BotDeleteInput(string BotId);

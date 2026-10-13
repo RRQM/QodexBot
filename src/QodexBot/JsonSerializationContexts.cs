@@ -6,12 +6,16 @@ using System.Text.Json.Nodes;
 [JsonSerializable(typeof(BotSettingsStore.BotSettingsDocument))]
 [JsonSerializable(typeof(BotSettingsInput))]
 [JsonSerializable(typeof(BotSettingsView))]
+[JsonSerializable(typeof(List<BotSettingsView>))]
+[JsonSerializable(typeof(BotCreateInput))]
+[JsonSerializable(typeof(BotDeleteInput))]
 [JsonSerializable(typeof(ConversationPage))]
 [JsonSerializable(typeof(ApiErrorResponse))]
 [JsonSerializable(typeof(ApiSaveSettingsResponse))]
 [JsonSerializable(typeof(ApiStatusResponse))]
 [JsonSerializable(typeof(QqQrLoginView))]
 [JsonSerializable(typeof(QqQrLoginCancelInput))]
+[JsonSerializable(typeof(QqQrLoginStartInput))]
 internal partial class WebJsonContext : JsonSerializerContext
 {
 }

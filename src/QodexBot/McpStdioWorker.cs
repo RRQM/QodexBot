@@ -103,7 +103,7 @@ internal static class McpStdioWorker
                     ["processName"] = StringProperty("Optional process name, with or without .exe, such as Code or notepad.")
                 }),
             CreateTool("qq_send_image",
-                "Send a PNG or JPEG image from the QodexBot qq-outbox directory to the current QQ conversation immediately.",
+                "Send a PNG or JPEG image from this bot's qq-outbox directory to the current QQ conversation immediately.",
                 new JsonObject
                 {
                     ["path"] = StringProperty("Absolute path to the image inside the qq-outbox directory.")

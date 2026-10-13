@@ -5,7 +5,8 @@ QodexBot 将 QQ 机器人 C2C 单聊消息转发给本机 Codex CLI，并把 Cod
 ## 功能
 
 - 通过 QQ 机器人开放平台接收和回复 C2C 单聊消息，支持正式环境与沙箱环境。
-- 为每次运行维持一个 Codex app-server 进程，并为每位 QQ 用户分别保存会话和上下文。
+- 支持绑定多个 QQ 机器人；每个机器人使用独立的网关连接、Codex app-server、工作目录和会话列表。
+- 在每个机器人内部为各 QQ 用户分别保存会话和上下文。
 - 在 QQ 中通过可配置指令查看状态、管理个人会话、重试或停止任务，以及直接发送桌面截图。
 - 将 Codex 生成的图片或本机图片直接发回 QQ。
 - 向 Codex 提供截图、键鼠操作和向 QQ 用户提问等 MCP 工具。
@@ -20,9 +21,9 @@ QodexBot 将 QQ 机器人 C2C 单聊消息转发给本机 Codex CLI，并把 Cod
 
 ## 首次配置
 
-1. 打开管理页面，点击“扫码绑定 QQ”，使用手机 QQ 扫描并确认。
+1. 打开管理页面，点击“添加机器人”，再为选中的机器人点击“扫码绑定 QQ”，使用手机 QQ 扫描并确认。可以重复添加并分别绑定多个机器人。
 2. 选择正式或沙箱环境，并按平台要求开通 C2C 单聊权限、启用 `C2C_MESSAGE_CREATE` 事件订阅。可用场景取决于开发者主体和平台审批。
-3. 扫码成功后，程序会在本机保存平台返回的 AppID 和 AppSecret，并自动连接机器人。修改管理端口后需要重启程序。
+3. 扫码成功后，程序会在本机保存该机器人的 AppID 和 AppSecret，并自动连接机器人。管理页可以分别设置每个机器人的环境、消息订阅和 QQ 指令。修改管理端口后需要重启程序。
 
 AppSecret 以明文保存在运行目录的 `settings.json` 中。管理页面不会读回已保存的密钥；修改其他设置时，AppSecret 留空即可保留现有值。请妥善保护程序目录和 Windows 用户账户。
 
@@ -37,7 +38,7 @@ npm install -g @openai/codex
 codex login
 ```
 
-程序按当前用户的 npm 全局安装路径查找 `@openai/codex/bin/codex.js`，并通过 `node.exe` 启动 `codex app-server`。机器人收到 QQ 网关 READY 后会启动 app-server；每位 QQ 用户的后续消息会进入自己的 Codex 会话。Codex 工作目录为 Windows 临时目录下的 `QodexBot` 文件夹。
+程序按当前用户的 npm 全局安装路径查找 `@openai/codex/bin/codex.js`，并通过 `node.exe` 启动 `codex app-server`。每个机器人收到 QQ 网关 READY 后会启动自己的 app-server；同一机器人内每位 QQ 用户有独立会话，不同机器人之间的 Codex 会话、MCP 工具通道和工作目录互相隔离。工作目录位于 Windows 临时目录下的 `QodexBot\bots\<机器人 ID>`。
 
 ## QQ 指令
 
@@ -61,7 +62,7 @@ codex login
 | `\模型 2` | 按列表编号切换当前会话模型，也可直接输入模型名称 |
 | `\更新Codex` | 更新全局 Codex CLI 并重启 app-server |
 
-指令在机器人端直接处理，不会发给 Codex。普通消息仍会进入 Codex。每位 QQ 用户有独立的会话列表、当前会话和模型选择；会话选择保存在程序目录的 `sessions.json` 中。更新指令使用 npm 全局安装最新版 `@openai/codex`，并自动重启 app-server。
+指令在机器人端直接处理，不会发给 Codex。普通消息仍会进入 Codex。每个机器人内的每位 QQ 用户有独立会话列表、当前会话和模型选择；会话选择保存在程序目录的 `sessions.json` 中。更新指令使用 npm 全局安装最新版 `@openai/codex`，并自动重启当前机器人的 app-server。
 
 ## QQ 和桌面 MCP 工具
 

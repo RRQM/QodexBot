@@ -1,5 +1,5 @@
-using System.Threading.Channels;
 using System.Text.Json;
+using System.Collections.Concurrent;
 
 internal sealed class BotSettingsStore(string filePath)
 {
@@ -25,15 +25,11 @@ internal sealed class BotSettingsStore(string filePath)
 
     private readonly object m_sync = new();
     private readonly SemaphoreSlim m_saveLock = new(1, 1);
-    private readonly Channel<BotConfig?> m_changes = Channel.CreateBounded<BotConfig?>(new BoundedChannelOptions(1)
-    {
-        FullMode = BoundedChannelFullMode.DropOldest,
-        SingleReader = true,
-        SingleWriter = false
-    });
+    private readonly SemaphoreSlim m_changeSignal = new(0, 1);
     private BotSettingsDocument m_settings = new();
     private string? m_configurationError;
     private string m_runtimeStatus = "等待机器人配置";
+    private readonly ConcurrentDictionary<string, string> m_botStatuses = new(StringComparer.Ordinal);
 
     public string FilePath { get; } = Path.GetFullPath(filePath);
     public string RuntimeStatus => Volatile.Read(ref m_runtimeStatus);
@@ -58,6 +54,14 @@ internal sealed class BotSettingsStore(string filePath)
             {
                 lock (this.m_sync)
                 {
+                    if (settings.Bots.Count == 0 && !string.IsNullOrWhiteSpace(settings.AppId))
+                    {
+                        settings.Bots.Add(new BotProfileDocument { Id = "default", Name = "QQ 机器人 1", AppId = settings.AppId,
+                            AppSecret = settings.AppSecret, Sandbox = settings.Sandbox,
+                            SubscribeC2cMessages = settings.SubscribeC2cMessages, CommandBindings = settings.CommandBindings });
+                        settings.AppId = string.Empty;
+                        settings.AppSecret = string.Empty;
+                    }
                     this.m_settings = settings;
                 }
             }
@@ -68,34 +72,12 @@ internal sealed class BotSettingsStore(string filePath)
             Console.Error.WriteLine(this.m_configurationError);
         }
 
-        _ = this.GetBotConfig();
+        _ = this.GetBots();
     }
 
     public BotConfig? GetBotConfig()
     {
-        BotSettingsDocument settings;
-        lock (this.m_sync)
-        {
-            settings = this.m_settings;
-        }
-
-        if (string.IsNullOrWhiteSpace(settings.AppId) || string.IsNullOrWhiteSpace(settings.AppSecret))
-        {
-            return null;
-        }
-
-        try
-        {
-            Validate(settings);
-            this.m_configurationError = null;
-            var intents = settings.SubscribeC2cMessages ? 1UL << 25 : 0;
-            return new BotConfig(settings.AppId, settings.AppSecret, settings.Sandbox, intents);
-        }
-        catch (ArgumentException ex)
-        {
-            this.m_configurationError = ex.Message;
-            return null;
-        }
+        return this.GetBotConfigs().FirstOrDefault();
     }
 
     public BotSettingsView GetView()
@@ -106,11 +88,52 @@ internal sealed class BotSettingsStore(string filePath)
             settings = this.m_settings;
         }
 
-        var configured = this.GetBotConfig() is not null;
-        return new BotSettingsView(settings.AppId, settings.Sandbox, settings.SubscribeC2cMessages,
-            settings.AdminPort, !string.IsNullOrEmpty(settings.AppSecret), configured,
-            this.m_configurationError ?? string.Empty, NormalizeCommandBindings(settings.CommandBindings));
+        var bot = settings.Bots.FirstOrDefault();
+        if (bot is null)
+            return new BotSettingsView("", "QQ 机器人", "", false, true, settings.AdminPort, false, false,
+                this.m_configurationError ?? "", NormalizeCommandBindings(null), "等待扫码绑定");
+        return ToView(bot, settings.AdminPort);
     }
+
+    public IReadOnlyList<BotSettingsView> GetBots()
+    {
+        BotSettingsDocument settings;
+        lock (this.m_sync) settings = this.m_settings;
+        return settings.Bots.Select(bot => ToView(bot, settings.AdminPort)).ToArray();
+    }
+
+    public BotConfig[] GetBotConfigs()
+    {
+        BotSettingsDocument settings;
+        lock (this.m_sync) settings = this.m_settings;
+        var configs = new List<BotConfig>();
+        foreach (var bot in settings.Bots)
+        {
+            if (string.IsNullOrWhiteSpace(bot.AppId) || string.IsNullOrWhiteSpace(bot.AppSecret)) continue;
+            try
+            {
+                Validate(bot);
+                configs.Add(new BotConfig(bot.Id, bot.Name, bot.AppId, bot.AppSecret, bot.Sandbox,
+                    bot.SubscribeC2cMessages ? 1UL << 25 : 0));
+            }
+            catch (ArgumentException ex)
+            {
+                this.m_configurationError = ex.Message;
+            }
+        }
+        return configs.ToArray();
+    }
+
+    public BotSettingsView? GetBot(string botId)
+    {
+        BotSettingsDocument settings;
+        lock (this.m_sync) settings = this.m_settings;
+        var bot = settings.Bots.FirstOrDefault(item => item.Id == botId);
+        return bot is null ? null : ToView(bot, settings.AdminPort);
+    }
+
+    public void SetBotRuntimeStatus(string botId, string status) => m_botStatuses[botId] = status;
+    public string GetBotRuntimeStatus(string botId) => m_botStatuses.GetValueOrDefault(botId, "等待机器人配置");
 
     public IReadOnlyDictionary<string, string> GetCommandBindings()
     {
@@ -128,16 +151,22 @@ internal sealed class BotSettingsStore(string filePath)
                 current = this.m_settings;
             }
 
-            var settings = new BotSettingsDocument
+            var botId = string.IsNullOrWhiteSpace(input.BotId) ? current.Bots.FirstOrDefault()?.Id : input.BotId.Trim();
+            var bot = current.Bots.FirstOrDefault(item => item.Id == botId)
+                ?? throw new ArgumentException("找不到要修改的机器人。");
+            var updatedBot = bot with
             {
+                Name = string.IsNullOrWhiteSpace(input.Name) ? bot.Name : input.Name.Trim(),
                 AppId = input.AppId?.Trim() ?? string.Empty,
-                AppSecret = string.IsNullOrWhiteSpace(input.AppSecret) ? current.AppSecret : input.AppSecret,
+                AppSecret = string.IsNullOrWhiteSpace(input.AppSecret) ? bot.AppSecret : input.AppSecret,
                 Sandbox = input.Sandbox,
                 SubscribeC2cMessages = input.SubscribeC2cMessages,
-                AdminPort = input.AdminPort,
-                CommandBindings = NormalizeCommandBindings(input.CommandBindings ?? current.CommandBindings),
+                CommandBindings = NormalizeCommandBindings(input.CommandBindings ?? bot.CommandBindings),
             };
-            Validate(settings, credentialsRequired: false);
+            Validate(updatedBot, credentialsRequired: false);
+            if (input.AdminPort is <= 0 or > 65535) throw new ArgumentException("管理端口必须在 1 到 65535 之间。");
+            if (updatedBot.Name.Length > 64 || updatedBot.Name.Any(char.IsControl)) throw new ArgumentException("机器人名称最多 64 个字符，且不能包含控制字符。");
+            var settings = current with { AdminPort = input.AdminPort, Bots = current.Bots.Select(item => item.Id == botId ? updatedBot : item).ToList() };
 
             var directory = Path.GetDirectoryName(this.FilePath)
                 ?? throw new InvalidOperationException("配置文件路径无效。");
@@ -159,9 +188,8 @@ internal sealed class BotSettingsStore(string filePath)
                 this.m_settings = settings;
             }
             this.m_configurationError = null;
-            var config = this.GetBotConfig();
-            this.m_changes.Writer.TryWrite(config);
-            return this.GetView();
+            SignalChanges();
+            return ToView(updatedBot, settings.AdminPort);
         }
         finally
         {
@@ -169,7 +197,41 @@ internal sealed class BotSettingsStore(string filePath)
         }
     }
 
-    public async Task<BotSettingsView> SaveQrCredentialsAsync(string appId, string appSecret, CancellationToken cancellationToken)
+    public async Task<BotSettingsView> AddBotAsync(string name, CancellationToken cancellationToken)
+    {
+        await this.m_saveLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            BotSettingsDocument current;
+            lock (this.m_sync) current = this.m_settings;
+            var profile = new BotProfileDocument { Id = Guid.NewGuid().ToString("N"), Name = string.IsNullOrWhiteSpace(name) ? $"QQ 机器人 {current.Bots.Count + 1}" : name.Trim() };
+            var settings = current with { Bots = [.. current.Bots, profile] };
+            await SaveDocumentAsync(settings, cancellationToken).ConfigureAwait(false);
+            lock (this.m_sync) this.m_settings = settings;
+            SignalChanges();
+            return ToView(profile, settings.AdminPort);
+        }
+        finally { this.m_saveLock.Release(); }
+    }
+
+    public async Task DeleteBotAsync(string botId, CancellationToken cancellationToken)
+    {
+        await this.m_saveLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            BotSettingsDocument current;
+            lock (this.m_sync) current = this.m_settings;
+            if (!current.Bots.Any(item => item.Id == botId)) throw new ArgumentException("找不到要删除的机器人。");
+            var settings = current with { Bots = current.Bots.Where(item => item.Id != botId).ToList() };
+            await SaveDocumentAsync(settings, cancellationToken).ConfigureAwait(false);
+            lock (this.m_sync) this.m_settings = settings;
+            m_botStatuses.TryRemove(botId, out _);
+            SignalChanges();
+        }
+        finally { this.m_saveLock.Release(); }
+    }
+
+    public async Task<BotSettingsView> SaveQrCredentialsAsync(string botId, string appId, string appSecret, CancellationToken cancellationToken)
     {
         await this.m_saveLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -180,16 +242,10 @@ internal sealed class BotSettingsStore(string filePath)
                 current = this.m_settings;
             }
 
-            var settings = new BotSettingsDocument
-            {
-                AppId = appId.Trim(),
-                AppSecret = appSecret,
-                Sandbox = current.Sandbox,
-                SubscribeC2cMessages = current.SubscribeC2cMessages,
-                AdminPort = current.AdminPort,
-                CommandBindings = NormalizeCommandBindings(current.CommandBindings),
-            };
-            Validate(settings);
+            var profile = current.Bots.FirstOrDefault(item => item.Id == botId) ?? throw new ArgumentException("机器人不存在。");
+            var updatedBot = profile with { AppId = appId.Trim(), AppSecret = appSecret };
+            Validate(updatedBot);
+            var settings = current with { Bots = current.Bots.Select(item => item.Id == botId ? updatedBot : item).ToList() };
             await this.SaveDocumentAsync(settings, cancellationToken).ConfigureAwait(false);
 
             lock (this.m_sync)
@@ -197,8 +253,8 @@ internal sealed class BotSettingsStore(string filePath)
                 this.m_settings = settings;
             }
             this.m_configurationError = null;
-            this.m_changes.Writer.TryWrite(this.GetBotConfig());
-            return this.GetView();
+            SignalChanges();
+            return ToView(updatedBot, settings.AdminPort);
         }
         finally
         {
@@ -224,8 +280,19 @@ internal sealed class BotSettingsStore(string filePath)
         }
     }
 
-    public IAsyncEnumerable<BotConfig?> ReadChangesAsync(CancellationToken cancellationToken) =>
-        this.m_changes.Reader.ReadAllAsync(cancellationToken);
+    public async IAsyncEnumerable<bool> ReadChangesAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await m_changeSignal.WaitAsync(cancellationToken).ConfigureAwait(false);
+            yield return true;
+        }
+    }
+
+    private void SignalChanges()
+    {
+        if (m_changeSignal.CurrentCount == 0) m_changeSignal.Release();
+    }
 
     public void SetRuntimeStatus(string status)
     {
@@ -245,6 +312,19 @@ internal sealed class BotSettingsStore(string filePath)
             throw new ArgumentException("不同动作不能绑定相同的命令。");
     }
 
+    private static void Validate(BotProfileDocument settings, bool credentialsRequired = true)
+    {
+        if (credentialsRequired && string.IsNullOrWhiteSpace(settings.AppId)) throw new ArgumentException("AppID 不能为空。");
+        if (credentialsRequired && string.IsNullOrWhiteSpace(settings.AppSecret)) throw new ArgumentException("AppSecret 不能为空。");
+        var commands = settings.CommandBindings.Values.Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value.Trim()).ToArray();
+        if (commands.Any(value => value.Length > 32 || value.Any(char.IsControl))) throw new ArgumentException("指令命令最多 32 个字符，且不能包含换行或控制字符。");
+        if (commands.Distinct(StringComparer.OrdinalIgnoreCase).Count() != commands.Length) throw new ArgumentException("不同动作不能绑定相同的命令。");
+    }
+
+    private BotSettingsView ToView(BotProfileDocument bot, int adminPort) => new(bot.Id, bot.Name, bot.AppId, bot.Sandbox,
+        bot.SubscribeC2cMessages, adminPort, !string.IsNullOrEmpty(bot.AppSecret), !string.IsNullOrEmpty(bot.AppId) && !string.IsNullOrEmpty(bot.AppSecret),
+        string.Empty, NormalizeCommandBindings(bot.CommandBindings), GetBotRuntimeStatus(bot.Id));
+
     private static Dictionary<string, string> NormalizeCommandBindings(Dictionary<string, string>? supplied)
     {
         var result = DefaultCommandBindings.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
@@ -254,7 +334,7 @@ internal sealed class BotSettingsStore(string filePath)
         return result;
     }
 
-    internal sealed class BotSettingsDocument
+    internal sealed record BotSettingsDocument
     {
         public BotSettingsDocument()
         {
@@ -267,6 +347,18 @@ internal sealed class BotSettingsStore(string filePath)
         public int AdminPort { get; set; } = 17890;
         public Dictionary<string, string> CommandBindings { get; set; } = DefaultCommandBindings
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        public List<BotProfileDocument> Bots { get; set; } = [];
+    }
+
+    internal sealed record BotProfileDocument
+    {
+        public string Id { get; init; } = Guid.NewGuid().ToString("N");
+        public string Name { get; init; } = "QQ 机器人";
+        public string AppId { get; init; } = string.Empty;
+        public string AppSecret { get; init; } = string.Empty;
+        public bool Sandbox { get; init; }
+        public bool SubscribeC2cMessages { get; init; } = true;
+        public Dictionary<string, string> CommandBindings { get; init; } = DefaultCommandBindings.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
     }
 }
 
@@ -276,9 +368,13 @@ internal sealed record BotSettingsInput(
     bool Sandbox,
     bool SubscribeC2cMessages,
     int AdminPort,
-    Dictionary<string, string>? CommandBindings = null);
+    Dictionary<string, string>? CommandBindings = null,
+    string? BotId = null,
+    string? Name = null);
 
 internal sealed record BotSettingsView(
+    string BotId,
+    string Name,
     string AppId,
     bool Sandbox,
     bool SubscribeC2cMessages,
@@ -286,4 +382,5 @@ internal sealed record BotSettingsView(
     bool SecretConfigured,
     bool IsConfigured,
     string ConfigurationError,
-    Dictionary<string, string> CommandBindings);
+    Dictionary<string, string> CommandBindings,
+    string RuntimeStatus);
