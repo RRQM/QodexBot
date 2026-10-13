@@ -81,11 +81,10 @@ codex login
 开发环境需要 .NET 10 SDK、Node.js 和已登录的 Codex CLI。在仓库根目录运行：
 
 ```powershell
-npm ci --omit=dev --prefix src/QodexBot/qq-connector
 dotnet run --project src/QodexBot/QodexBot.csproj
 ```
 
-发布包会包含扫码绑定所需的 Node.js 依赖；扫码时需要 Node.js 18 或更高版本可从 PATH 启动。
+QQ 扫码绑定由程序内的 C# 实现，不再需要额外安装 Node.js 扫码组件；Node.js 仍用于运行 Codex CLI。
 
 运行测试：
 

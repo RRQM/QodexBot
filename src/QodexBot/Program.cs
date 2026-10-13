@@ -29,7 +29,7 @@ using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
 await using var codex = new CodexAppServer();
 await using var mcp = new LocalToolIpcServer();
 await mcp.StartAsync();
-await using var qrLogin = new QqQrLoginService(settingsStore, Path.Combine(runtimeDirectory, "qq-connector", "login.mjs"));
+await using var qrLogin = new QqQrLoginService(settingsStore, http);
 await using var admin = new AdminWebServer(settingsStore, conversationStore, qrLogin);
 await admin.StartAsync(shutdown.Token);
 Console.WriteLine($"管理页面已启动：{admin.DisplayUrl}");

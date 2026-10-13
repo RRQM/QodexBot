@@ -1,153 +1,124 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using QRCoder;
 
 /// <summary>
 /// 管理 QQ 机器人扫码绑定会话，并在绑定成功后保存平台凭据。
 /// </summary>
-internal sealed class QqQrLoginService(BotSettingsStore settingsStore, string helperPath) : IAsyncDisposable
+internal sealed class QqQrLoginService(BotSettingsStore settingsStore, HttpClient httpClient) : IAsyncDisposable
 {
+    private const string ApiHost = "https://q.qq.com";
     private static readonly TimeSpan SessionLifetime = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
     private readonly ConcurrentDictionary<string, LoginSession> m_sessions = new(StringComparer.Ordinal);
     private readonly BotSettingsStore m_settingsStore = settingsStore;
-    private readonly string m_helperPath = Path.GetFullPath(helperPath);
+    private readonly HttpClient m_httpClient = httpClient;
 
     public async Task<QqQrLoginView> StartAsync(CancellationToken cancellationToken)
     {
-        if (!File.Exists(this.m_helperPath))
-            throw new InvalidOperationException("扫码组件文件缺失，请重新安装或解压程序包。");
-        var connectorDirectory = Path.GetDirectoryName(this.m_helperPath)!;
-        if (!Directory.Exists(Path.Combine(connectorDirectory, "node_modules")))
-            throw new InvalidOperationException("扫码依赖尚未安装。请在 qq-connector 目录运行 npm ci --omit=dev 后重试。");
-
         var sessionId = Guid.NewGuid().ToString("N");
-        var startInfo = new ProcessStartInfo("node")
-        {
-            WorkingDirectory = connectorDirectory,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-        startInfo.ArgumentList.Add(this.m_helperPath);
-        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        try
-        {
-            if (!process.Start()) throw new InvalidOperationException("无法启动 QQ 扫码组件。");
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
-        {
-            throw new InvalidOperationException("找不到 Node.js。请安装 Node.js 18 或更高版本后重试。", ex);
-        }
-
-        var session = new LoginSession(sessionId, process);
+        var bindTask = await this.CreateBindTaskAsync(cancellationToken).ConfigureAwait(false);
+        var session = new LoginSession(sessionId, bindTask.TaskId, bindTask.Key, CreateQrSvg(BuildConnectUrl(bindTask.TaskId)));
         if (!this.m_sessions.TryAdd(sessionId, session))
-        {
-            process.Kill(entireProcessTree: true);
             throw new InvalidOperationException("无法创建扫码会话。");
-        }
 
-        session.ReaderTask = this.ReadOutputAsync(session);
-        _ = ReadErrorAsync(session);
-        _ = this.EnforceLifetimeAsync(session);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        linked.CancelAfter(TimeSpan.FromSeconds(20));
-        try
-        {
-            return await session.QrReady.Task.WaitAsync(linked.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            await this.CancelAsync(sessionId).ConfigureAwait(false);
-            throw new InvalidOperationException("获取 QQ 登录二维码超时，请稍后重试。");
-        }
-        catch
-        {
-            await this.CancelAsync(sessionId).ConfigureAwait(false);
-            throw;
-        }
+        session.WorkerTask = this.PollAsync(session);
+        return session.View;
     }
 
     public QqQrLoginView Get(string sessionId)
     {
         if (!this.m_sessions.TryGetValue(sessionId, out var session))
             return new QqQrLoginView(sessionId, "expired", "扫码会话已失效，请重新开始。", null);
+
         lock (session.Sync)
-        {
-            if (!session.IsTerminal && DateTimeOffset.UtcNow - session.CreatedAt >= SessionLifetime)
-                _ = this.CancelAsync(sessionId);
             return session.View;
-        }
     }
 
     public async Task<QqQrLoginView> CancelAsync(string sessionId)
     {
         if (!this.m_sessions.TryGetValue(sessionId, out var session))
             return new QqQrLoginView(sessionId, "expired", "扫码会话已失效。", null);
+
         lock (session.Sync)
         {
             if (!session.IsTerminal)
                 session.SetTerminal("cancelled", "已取消扫码绑定。", null);
         }
-        try
-        {
-            if (!session.Process.HasExited) session.Process.Kill(entireProcessTree: true);
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        await session.ReaderTask.ConfigureAwait(false);
-        if (session.View.Status is "cancelled" or "expired")
-        {
-            this.m_sessions.TryRemove(sessionId, out _);
-            session.Process.Dispose();
-        }
+
+        session.Cancellation.Cancel();
+        await session.WorkerTask.ConfigureAwait(false);
+        this.m_sessions.TryRemove(sessionId, out _);
+        session.Dispose();
         return session.View;
     }
 
-    private async Task ReadOutputAsync(LoginSession session)
+    private async Task PollAsync(LoginSession session)
     {
         try
         {
-            while (await session.Process.StandardOutput.ReadLineAsync().ConfigureAwait(false) is { } line)
+            while (!session.Cancellation.IsCancellationRequested)
             {
-                using var document = JsonDocument.Parse(line);
-                var root = document.RootElement;
-                var type = root.GetProperty("type").GetString();
-                if (type == "qr")
+                if (DateTimeOffset.UtcNow - session.CreatedAt >= SessionLifetime)
                 {
-                    var svg = root.GetProperty("svg").GetString();
-                    var view = new QqQrLoginView(session.Id, "waiting", "请使用手机 QQ 扫描二维码。", svg);
-                    lock (session.Sync) session.View = view;
-                    session.QrReady.TrySetResult(view);
-                }
-                else if (type == "success")
-                {
-                    var credentials = root.GetProperty("credentials");
-                    if (credentials.GetArrayLength() == 0) throw new InvalidOperationException("扫码未返回机器人凭据。");
-                    var credential = credentials[0];
-                    await this.m_settingsStore.SaveQrCredentialsAsync(
-                        credential.GetProperty("appId").GetString() ?? string.Empty,
-                        credential.GetProperty("appSecret").GetString() ?? string.Empty,
-                        CancellationToken.None).ConfigureAwait(false);
-                    lock (session.Sync) session.SetTerminal("connected", "扫码绑定成功，机器人正在连接。", null);
+                    lock (session.Sync)
+                        if (!session.IsTerminal)
+                            session.SetTerminal("expired", "二维码已过期，请重新开始。", null);
+                    this.m_sessions.TryRemove(session.Id, out _);
                     return;
                 }
-                else if (type == "failure")
-                {
-                    var error = root.TryGetProperty("message", out var message) ? message.GetString() : null;
-                    lock (session.Sync) session.SetTerminal("failed", $"扫码绑定失败：{error ?? "未知错误"}", null);
-                    session.QrReady.TrySetException(new InvalidOperationException(session.View.Message));
-                    return;
-                }
-            }
 
-            lock (session.Sync)
-            {
-                if (!session.IsTerminal)
-                    session.SetTerminal("failed", "扫码组件已退出，请重试。", null);
+                PollResult result;
+                try
+                {
+                    result = await this.PollBindResultAsync(session.TaskId, session.Cancellation.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (session.Cancellation.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"QQ 扫码轮询失败：{ex.Message}");
+                    await Task.Delay(PollInterval, session.Cancellation.Token).ConfigureAwait(false);
+                    continue;
+                }
+
+                if (result.Status == BindStatus.Completed)
+                {
+                    var appSecret = DecryptSecret(result.EncryptedSecret, session.Key);
+                    if (string.IsNullOrWhiteSpace(result.AppId) || string.IsNullOrWhiteSpace(appSecret))
+                        throw new InvalidOperationException("扫码未返回有效的机器人凭据。");
+
+                    await this.m_settingsStore.SaveQrCredentialsAsync(result.AppId, appSecret, session.Cancellation.Token)
+                        .ConfigureAwait(false);
+                    lock (session.Sync)
+                        if (!session.IsTerminal)
+                            session.SetTerminal("connected", "扫码绑定成功，机器人正在连接。", null);
+                    return;
+                }
+
+                if (result.Status == BindStatus.Expired)
+                {
+                    var replacement = await this.CreateBindTaskAsync(session.Cancellation.Token).ConfigureAwait(false);
+                    var svg = CreateQrSvg(BuildConnectUrl(replacement.TaskId));
+                    lock (session.Sync)
+                    {
+                        if (session.IsTerminal) return;
+                        session.TaskId = replacement.TaskId;
+                        session.Key = replacement.Key;
+                        session.View = new QqQrLoginView(session.Id, "waiting", "二维码已刷新，请使用手机 QQ 扫描。", svg);
+                    }
+                }
+
+                await Task.Delay(PollInterval, session.Cancellation.Token).ConfigureAwait(false);
             }
-            session.QrReady.TrySetException(new InvalidOperationException(session.View.Message));
+        }
+        catch (OperationCanceledException) when (session.Cancellation.IsCancellationRequested)
+        {
         }
         catch (Exception ex)
         {
@@ -156,51 +127,157 @@ internal sealed class QqQrLoginService(BotSettingsStore settingsStore, string he
                 if (!session.IsTerminal)
                     session.SetTerminal("failed", $"扫码绑定失败：{ex.Message}", null);
             }
-            session.QrReady.TrySetException(ex);
         }
     }
 
-    private static async Task ReadErrorAsync(LoginSession session)
+    private async Task<BindTask> CreateBindTaskAsync(CancellationToken cancellationToken)
     {
-        var error = await session.Process.StandardError.ReadToEndAsync().ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(error)) Console.Error.WriteLine($"QQ 扫码组件：{error.Trim()}");
-    }
-
-    private async Task EnforceLifetimeAsync(LoginSession session)
-    {
-        await Task.Delay(SessionLifetime).ConfigureAwait(false);
-        await this.CancelAsync(session.Id).ConfigureAwait(false);
-        lock (session.Sync)
+        var keyBytes = RandomNumberGenerator.GetBytes(32);
+        var key = Convert.ToBase64String(keyBytes);
+        using var request = CreateJsonRequest($"{ApiHost}/lite/create_bind_task", writer =>
         {
-            if (session.View.Status == "cancelled")
-                session.View = session.View with { Status = "expired", Message = "二维码已过期，请重新开始。" };
+            writer.WriteStartObject();
+            writer.WriteString("key", key);
+            writer.WriteEndObject();
+        });
+        using var response = await this.m_httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadSuccessResponseAsync(response, cancellationToken).ConfigureAwait(false);
+        var root = document.RootElement;
+        EnsureSuccess(root, "create_bind_task");
+        if (!root.TryGetProperty("data", out var data) || !data.TryGetProperty("task_id", out var taskIdElement))
+            throw new InvalidOperationException("QQ 接口未返回绑定任务 ID。");
+        var taskId = taskIdElement.GetString();
+        if (string.IsNullOrWhiteSpace(taskId))
+            throw new InvalidOperationException("QQ 接口返回的绑定任务 ID 为空。");
+        return new BindTask(taskId, key);
+    }
+
+    private async Task<PollResult> PollBindResultAsync(string taskId, CancellationToken cancellationToken)
+    {
+        using var request = CreateJsonRequest($"{ApiHost}/lite/poll_bind_result", writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteString("task_id", taskId);
+            writer.WriteEndObject();
+        });
+        using var response = await this.m_httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadSuccessResponseAsync(response, cancellationToken).ConfigureAwait(false);
+        var root = document.RootElement;
+        EnsureSuccess(root, "poll_bind_result");
+        if (!root.TryGetProperty("data", out var data))
+            return new PollResult(BindStatus.None, string.Empty, string.Empty);
+
+        var status = data.TryGetProperty("status", out var statusElement) && statusElement.TryGetInt32(out var statusValue)
+            ? (BindStatus)statusValue
+            : BindStatus.None;
+        var appId = data.TryGetProperty("bot_appid", out var appIdElement) ? appIdElement.ToString() : string.Empty;
+        var encryptedSecret = data.TryGetProperty("bot_encrypt_secret", out var secretElement)
+            ? secretElement.GetString() ?? string.Empty
+            : string.Empty;
+        return new PollResult(status, appId, encryptedSecret);
+    }
+
+    private static HttpRequestMessage CreateJsonRequest(string url, Action<Utf8JsonWriter> writeBody)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+            writeBody(writer);
+        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new ByteArrayContent(stream.ToArray()),
+        };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        return request;
+    }
+
+    private static async Task<JsonDocument> ReadSuccessResponseAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void EnsureSuccess(JsonElement root, string operation)
+    {
+        if (!root.TryGetProperty("retcode", out var code) || !code.TryGetInt32(out var value) || value != 0)
+        {
+            var message = root.TryGetProperty("msg", out var messageElement) ? messageElement.GetString() : null;
+            throw new InvalidOperationException(message ?? $"QQ 接口 {operation} 返回错误。");
         }
-        this.m_sessions.TryRemove(session.Id, out _);
-        session.Process.Dispose();
+    }
+
+    private static string BuildConnectUrl(string taskId) =>
+        $"{ApiHost}/qqbot/openclaw/connect.html?task_id={Uri.EscapeDataString(taskId)}&source=&_wv=2";
+
+    private static string CreateQrSvg(string url)
+    {
+        using var generator = new QRCodeGenerator();
+        using var data = generator.CreateQrCode(url, QRCodeGenerator.ECCLevel.Q);
+        using var qrCode = new SvgQRCode(data);
+        return qrCode.GetGraphic(6, "#14213d", "#ffffff", drawQuietZones: true);
+    }
+
+    private static string DecryptSecret(string encryptedSecret, string base64Key)
+    {
+        var encrypted = Convert.FromBase64String(encryptedSecret);
+        var key = Convert.FromBase64String(base64Key);
+        if (encrypted.Length < 12 + 16)
+            throw new InvalidOperationException("QQ 接口返回的加密密钥格式无效。");
+
+        var nonce = encrypted.AsSpan(0, 12);
+        var tag = encrypted.AsSpan(encrypted.Length - 16, 16);
+        var ciphertext = encrypted.AsSpan(12, encrypted.Length - 12 - 16);
+        var plaintext = new byte[ciphertext.Length];
+        using var aes = new AesGcm(key, 16);
+        aes.Decrypt(nonce, ciphertext, tag, plaintext);
+        return Encoding.UTF8.GetString(plaintext);
     }
 
     public async ValueTask DisposeAsync()
     {
         foreach (var session in this.m_sessions.Values)
         {
-            if (!session.IsTerminal) await this.CancelAsync(session.Id).ConfigureAwait(false);
-            session.Process.Dispose();
+            session.Cancellation.Cancel();
+            try
+            {
+                await session.WorkerTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            session.Dispose();
         }
+        this.m_sessions.Clear();
     }
 
-    private sealed class LoginSession(string id, Process process)
+    private enum BindStatus
+    {
+        None = 0,
+        Pending = 1,
+        Completed = 2,
+        Expired = 3,
+    }
+
+    private sealed record BindTask(string TaskId, string Key);
+    private sealed record PollResult(BindStatus Status, string AppId, string EncryptedSecret);
+
+    private sealed class LoginSession(string id, string taskId, string key, string qrSvg)
     {
         public object Sync { get; } = new();
         public string Id { get; } = id;
-        public Process Process { get; } = process;
+        public string TaskId { get; set; } = taskId;
+        public string Key { get; set; } = key;
         public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
-        public TaskCompletionSource<QqQrLoginView> QrReady { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public Task ReaderTask { get; set; } = Task.CompletedTask;
-        public QqQrLoginView View { get; set; } = new(id, "starting", "正在获取二维码…", null);
+        public CancellationTokenSource Cancellation { get; } = new();
+        public Task WorkerTask { get; set; } = Task.CompletedTask;
+        public QqQrLoginView View { get; set; } = new(id, "waiting", "请使用手机 QQ 扫描二维码。", qrSvg);
         public bool IsTerminal => this.View.Status is "connected" or "failed" or "cancelled" or "expired";
 
         public void SetTerminal(string status, string message, string? svg) =>
             this.View = new QqQrLoginView(this.Id, status, message, svg);
+
+        public void Dispose() => this.Cancellation.Dispose();
     }
 }
 
