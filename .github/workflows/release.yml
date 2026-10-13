@@ -1,0 +1,78 @@
+name: Publish win-x64 AOT release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect version change
+        id: version
+        shell: pwsh
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          function Get-ProjectVersion([xml]$ProjectFile) {
+            $node = $ProjectFile.SelectSingleNode('/Project/PropertyGroup/Version')
+            if ($null -eq $node -or [string]::IsNullOrWhiteSpace($node.InnerText)) {
+              throw 'Version was not found in src/Directory.Build.props.'
+            }
+
+            return $node.InnerText.Trim()
+          }
+
+          [xml]$currentProps = Get-Content -Raw 'src/Directory.Build.props'
+          $currentVersion = Get-ProjectVersion $currentProps
+          if ($currentVersion -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
+            throw "Version '$currentVersion' is not a valid release version."
+          }
+
+          $previousVersion = ''
+          if ($env:BEFORE_SHA -and $env:BEFORE_SHA -notmatch '^0+$') {
+            $previousPropsText = git show "$($env:BEFORE_SHA):src/Directory.Build.props"
+            if ($LASTEXITCODE -eq 0) {
+              [xml]$previousProps = $previousPropsText -join "`n"
+              $previousVersion = Get-ProjectVersion $previousProps
+            }
+          }
+
+          $changed = $previousVersion -ne $currentVersion
+          "version=$currentVersion" >> $env:GITHUB_OUTPUT
+          "changed=$($changed.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          Write-Host "Previous version: $(if ($previousVersion) { $previousVersion } else { '(none)' })"
+          Write-Host "Current version: $currentVersion"
+          Write-Host "Version changed: $changed"
+
+      - name: Set up .NET 10
+        if: steps.version.outputs.changed == 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish win-x64 Native AOT package
+        if: steps.version.outputs.changed == 'true'
+        shell: pwsh
+        run: ./Publish-Packages.ps1 -NoPause
+
+      - name: Create GitHub release
+        if: steps.version.outputs.changed == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: >-
+          gh release create "v$env:VERSION"
+          "artifacts/packages/qodexbot-win-x64-aot-$env:VERSION.zip"
+          --title "QodexBot $env:VERSION"
+          --generate-notes
