@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/.Solutions/">
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+  </Folder>
+  <Project Path="QodexBot\QodexBot.csproj" />
+  <Project Path="QodexBot.Tests\QodexBot.Tests.csproj" />
+</Solution>

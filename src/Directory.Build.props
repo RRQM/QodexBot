@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <Version>0.0.1</Version>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Company>若汝棋茗</Company>
+    <Copyright>Copyright © 2026 若汝棋茗</Copyright>
+    <Authors>若汝棋茗</Authors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="QodexBot.Tests" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>QodexBot 管理</title>
+  <style>
+    :root{font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif;color:#202b3c;background:#f3f6fb;font-synthesis:none;text-rendering:optimizeLegibility}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 18% 0,#e1eaff 0,transparent 34%),#f3f6fb}
+    .shell{width:min(100% - 32px,980px);margin:46px auto 64px}.top{display:flex;align-items:center;gap:14px;margin-bottom:25px}
+    .mark{width:46px;height:46px;border-radius:15px;background:#315de8;color:white;display:grid;place-items:center;font-weight:800;font-size:21px;box-shadow:0 8px 20px #315de83b}
+    h1{font-size:23px;margin:0 0 4px;letter-spacing:-.3px}.subtitle{margin:0;color:#728098;font-size:13px}
+    .layout{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:18px;align-items:start}
+    .history-card{margin-top:18px;padding:24px 27px}.history-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:16px}.history-head h2{font-size:15px;margin:0}.history-tools{display:flex;gap:9px;align-items:center}.history-tools input{width:230px;height:38px;border:1px solid #dbe2ed;border-radius:9px;padding:0 11px;font:inherit;font-size:12px}.button.secondary{height:38px;background:#edf2ff;color:#315de8;box-shadow:none}.button.secondary:hover{background:#e0e9ff}.history-list{display:flex;flex-direction:column;gap:10px}.history-item{border:1px solid #e9edf4;border-radius:12px;padding:13px 15px;background:#fff}.history-meta{display:flex;align-items:center;gap:9px;margin-bottom:8px;color:#7a879a;font-size:11px}.history-kind{font-weight:700;color:#315de8}.history-user{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.history-content{font-size:13px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;color:#34435a}.history-images{color:#8a5a00;font-size:11px;margin-top:6px}.history-empty{padding:32px 10px;text-align:center;color:#929cac;font-size:13px}.history-footer{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:16px}.history-note{font-size:11px;color:#8994a6}
+    .card{background:#fff;border:1px solid #e5eaf2;border-radius:18px;box-shadow:0 12px 40px #233c6810}.form-card{padding:25px 27px}.side{padding:22px;position:sticky;top:18px}
+    .section-title{font-size:15px;font-weight:700;margin:0 0 18px}.field{margin:0 0 17px}.field label{display:block;font-size:12px;font-weight:650;color:#45546c;margin-bottom:7px}
+    input[type=text],input[type=password],input[type=url],input[type=number]{width:100%;height:42px;border:1px solid #dbe2ed;border-radius:10px;padding:0 12px;color:#202b3c;background:#fff;font:inherit;font-size:13px;outline:none;transition:.15s}
+    input:focus{border-color:#6887ef;box-shadow:0 0 0 3px #4269e51b}input::placeholder{color:#a3adbd}.hint{font-size:11px;color:#8994a6;margin:6px 1px 0;line-height:1.55}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:14px}.toggle{display:flex;align-items:flex-start;gap:10px;margin:5px 0 18px;color:#3d4a60;font-size:13px;line-height:1.4}
+    .toggle input{accent-color:#315de8;margin:2px 0 0}.actions{display:flex;align-items:center;gap:12px;margin-top:22px}.button{height:42px;border:0;border-radius:10px;padding:0 18px;background:#315de8;color:white;font:inherit;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 7px 16px #315de82b}.button:hover{background:#244ed7}.button:disabled{opacity:.58;cursor:wait}
+    .message{font-size:12px;color:#66748a}.message.error{color:#c23f4e}.status-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.status-head h2{font-size:14px;margin:0}.badge{font-size:11px;border-radius:999px;padding:6px 9px;background:#edf1f6;color:#68758a;white-space:nowrap}.badge.ok{color:#18794e;background:#e5f6ec}.badge.warn{color:#9a6500;background:#fff2d7}.status-text{font-size:13px;line-height:1.55;margin:0 0 17px;color:#34435a;overflow-wrap:anywhere}.divider{height:1px;background:#edf0f5;margin:16px 0}.meta-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#96a0af;margin-bottom:6px}.filepath{font-size:11px;line-height:1.5;color:#78859a;overflow-wrap:anywhere}.footnote{margin:17px 2px 0;color:#929cac;font-size:11px;line-height:1.6}
+    @media(max-width:760px){.shell{margin:25px auto 40px}.layout{grid-template-columns:1fr}.side{position:static;grid-row:1}.form-card,.history-card{padding:22px}.row{grid-template-columns:1fr;gap:0}.history-head{align-items:stretch;flex-direction:column}.history-tools input{width:100%;flex:1}.history-tools{width:100%}}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="top"><div class="mark">Q</div><div><h1>QodexBot 管理</h1><p class="subtitle">配置 QQ 机器人并查看连接状态</p></div></header>
+    <div class="layout">
+      <section class="card form-card">
+        <h2 class="section-title">机器人接入</h2>
+        <form id="settings-form">
+          <div class="row">
+            <div class="field"><label for="appId">App ID</label><input id="appId" name="appId" type="text" required autocomplete="off" placeholder="输入 QQ 机器人 App ID"></div>
+            <div class="field"><label for="appSecret">App Secret</label><input id="appSecret" name="appSecret" type="password" autocomplete="new-password" placeholder="留空则保留已保存的密钥"><p id="secret-hint" class="hint">密钥保存到本机 JSON 配置，不会从管理接口读回。</p></div>
+          </div>
+          <div class="field"><label for="environment">运行环境</label><select id="environment" name="sandbox" style="width:100%;height:42px;border:1px solid #dbe2ed;border-radius:10px;padding:0 11px;background:white;color:#202b3c;font:inherit;font-size:13px"><option value="false">正式环境</option><option value="true">沙箱环境</option></select></div>
+          <div class="field"><label for="adminPort">管理页面端口</label><input id="adminPort" type="number" min="1" max="65535" required><p class="hint">端口保存在本地配置文件中；修改后需重启程序生效。</p></div>
+          <label class="toggle"><input id="subscribeC2cMessages" type="checkbox"><span><strong>接收 C2C 私聊消息</strong><br><span class="hint">关闭后机器人会连接网关，但不订阅私聊消息事件。</span></span></label>
+          <div class="actions"><button id="save" class="button" type="submit">保存并应用</button><span id="message" class="message" role="status"></span></div>
+        </form>
+      </section>
+      <aside class="card side">
+        <div class="status-head"><h2>运行状态</h2><span id="badge" class="badge">读取中</span></div>
+        <p id="runtime-status" class="status-text">正在读取机器人状态…</p>
+        <div class="divider"></div>
+        <div class="meta-label">配置文件</div><div id="config-file" class="filepath">—</div>
+        <p class="footnote">保存后设置会写入 JSON，并自动重连以应用新配置。App Secret 以明文保存在当前 Windows 用户的本地应用数据目录中。</p>
+      </aside>
+    </div>
+    <section class="card history-card">
+      <div class="history-head"><div><h2>会话记录</h2><p class="hint">消息、回复、提问和图片发送事件保存在本机，重启后仍可查看。</p></div><div class="history-tools"><input id="history-filter" type="text" placeholder="按 QQ 用户 OpenID 筛选"><button id="history-refresh" class="button secondary" type="button">刷新</button></div></div>
+      <div id="history-list" class="history-list"><div class="history-empty">正在读取会话记录…</div></div>
+      <div class="history-footer"><button id="history-more" class="button secondary" type="button" hidden>加载更早记录</button><span id="history-note" class="history-note"></span></div>
+    </section>
+  </main>
+  <script>
+    const api = async (path, options = {}) => {
+      const response = await fetch(path, {
+        ...options,
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      return body;
+    };
+    const message = document.getElementById('message');
+    const setMessage = (text, error = false) => { message.textContent = text; message.className = `message${error ? ' error' : ''}`; };
+    const historyList = document.getElementById('history-list');
+    const historyMore = document.getElementById('history-more');
+    const historyNote = document.getElementById('history-note');
+    let historyBeforeId = null;
+    let historyHasMore = false;
+    let historyViewingOlder = false;
+    const kindLabels = { user: 'QQ 用户', assistant: 'Codex 回复', reasoning: '推理摘要', question: 'Codex 提问', answer: '用户回答', image: '图片发送' };
+    function renderHistoryItem(item) {
+      const article = document.createElement('article'); article.className = 'history-item';
+      const meta = document.createElement('div'); meta.className = 'history-meta';
+      const kind = document.createElement('span'); kind.className = 'history-kind'; kind.textContent = kindLabels[item.kind] || item.kind;
+      const time = document.createElement('time'); time.textContent = new Date(item.timestamp).toLocaleString();
+      const user = document.createElement('span'); user.className = 'history-user'; user.textContent = `用户 ${item.userOpenId}`;
+      meta.append(kind, time, user); article.append(meta);
+      const content = document.createElement('div'); content.className = 'history-content'; content.textContent = item.content || (item.imageCount ? '（无文本内容）' : '（空消息）'); article.append(content);
+      if (item.imageCount > 0) { const images = document.createElement('div'); images.className = 'history-images'; images.textContent = `附带 ${item.imageCount} 张图片`; article.append(images); }
+      return article;
+    }
+    async function loadConversations(reset = false, older = false) {
+      const filter = document.getElementById('history-filter').value.trim();
+      if (reset) { historyBeforeId = null; historyViewingOlder = false; historyList.replaceChildren(); }
+      const params = new URLSearchParams({ limit: '50' });
+      if (older && historyBeforeId !== null) params.set('beforeId', String(historyBeforeId));
+      if (filter) params.set('userOpenId', filter);
+      try {
+        const page = await api(`/api/conversations?${params}`);
+        if (!page.items?.length && reset) historyList.innerHTML = '<div class="history-empty">暂无会话记录</div>';
+        const fragment = document.createDocumentFragment();
+        page.items.forEach(item => fragment.append(renderHistoryItem(item)));
+        if (older) historyList.prepend(fragment); else historyList.append(fragment);
+        historyBeforeId = page.nextBeforeId;
+        historyHasMore = Boolean(page.hasMore);
+        historyMore.hidden = !historyHasMore;
+        historyNote.textContent = page.items?.length ? `本页 ${page.items.length} 条${historyHasMore ? '，还有更早记录' : '，已到最早记录'}` : '';
+        if (older && page.items?.length) historyViewingOlder = true;
+      } catch (error) {
+        if (reset) historyList.innerHTML = '';
+        const empty = document.createElement('div'); empty.className = 'history-empty'; empty.textContent = `读取会话记录失败：${error.message}`; historyList.append(empty);
+      }
+    }
+    document.getElementById('history-refresh').addEventListener('click', () => loadConversations(true));
+    document.getElementById('history-filter').addEventListener('keydown', event => { if (event.key === 'Enter') loadConversations(true); });
+    historyMore.addEventListener('click', () => loadConversations(false, true));
+    async function loadSettings() {
+      const s = await api('/api/settings');
+      document.getElementById('appId').value = s.appId || '';
+      document.getElementById('environment').value = String(Boolean(s.sandbox));
+      document.getElementById('adminPort').value = s.adminPort || 17890;
+      document.getElementById('subscribeC2cMessages').checked = s.subscribeC2cMessages !== false;
+      document.getElementById('secret-hint').textContent = s.secretConfigured ? '密钥已保存。留空可保留当前密钥；输入新值可替换。' : '尚未配置密钥，请填写 QQ 开放平台提供的 App Secret。';
+    }
+    async function loadStatus() {
+      try {
+        const data = await api('/api/status');
+        document.getElementById('runtime-status').textContent = data.runtimeStatus || '未知';
+        document.getElementById('config-file').textContent = data.configFile || '—';
+        const badge = document.getElementById('badge');
+        const configured = data.configuration?.isConfigured;
+        badge.textContent = configured ? '已配置' : '待配置';
+        badge.className = `badge ${configured ? 'ok' : 'warn'}`;
+      } catch (error) {
+        document.getElementById('runtime-status').textContent = error.message;
+      }
+    }
+    document.getElementById('settings-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = document.getElementById('save');
+      button.disabled = true;
+      setMessage('正在保存…');
+      const payload = {
+        appId: document.getElementById('appId').value,
+        appSecret: document.getElementById('appSecret').value,
+        sandbox: document.getElementById('environment').value === 'true',
+        subscribeC2cMessages: document.getElementById('subscribeC2cMessages').checked,
+        adminPort: Number(document.getElementById('adminPort').value),
+      };
+      try {
+        const result = await api('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
+        document.getElementById('appSecret').value = '';
+        setMessage(result.message || '已保存。');
+        await Promise.all([loadSettings(), loadStatus()]);
+      } catch (error) { setMessage(error.message, true); }
+      finally { button.disabled = false; }
+    });
+    Promise.all([loadSettings(), loadStatus(), loadConversations(true)]).catch(error => setMessage(error.message, true));
+    setInterval(loadStatus, 4000);
+    setInterval(() => { if (!historyViewingOlder) loadConversations(true); }, 10000);
+  </script>
+</body>
+</html>
