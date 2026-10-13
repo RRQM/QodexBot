@@ -130,8 +130,11 @@
       ['sessions', '会话列表', '列出会话'], ['switch-session', '切换会话', '命令后附列表编号'], ['new-session', '新建会话', '开始新的 Codex 会话'],
       ['recent', '最近记录', '查看最近的对话摘要'], ['current', '当前会话', '查看当前会话名称'],
       ['rename', '重命名会话', '命令后附会话名称'], ['workdir', '工作目录', '查看当前工作目录'],
-      ['screenshot', '发送截图', '截取桌面并发送'], ['retry', '重试上一条', '重发最近一次请求'], ['stop', '停止任务', '中断当前任务']
+      ['screenshot', '发送截图', '截取桌面并发送'], ['retry', '重试上一条', '重发最近一次请求'], ['stop', '停止任务', '中断当前任务'],
+      ['models', '模型列表', '查看 Codex CLI 提供的模型'], ['switch-model', '切换模型', '命令后附模型名称或列表编号'],
+      ['update-codex', '更新 Codex CLI', '更新全局 Codex CLI 并重启 app-server']
     ];
+    document.querySelector('.command-count').textContent = `${commandDefinitions.length} 个动作`;
     const commandList = document.getElementById('command-list');
     for (const [key, title, help] of commandDefinitions) {
       const field = document.createElement('div'); field.className = 'field command-field';

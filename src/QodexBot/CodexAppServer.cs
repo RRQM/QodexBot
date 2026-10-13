@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 
 internal sealed class CodexAppServer : IAsyncDisposable
 {
+    public const string DefaultModel = "gpt-6-luna";
     private readonly string _cliScript = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "npm", "node_modules", "@openai", "codex", "bin", "codex.js");
     private readonly string _workDirectory = Path.Combine(Path.GetTempPath(), "QodexBot");
@@ -121,6 +122,68 @@ internal sealed class CodexAppServer : IAsyncDisposable
         return threadId;
     }
 
+    public async Task<IReadOnlyList<CodexModel>> ListModelsAsync(CancellationToken cancellationToken)
+    {
+        await StartAsync(cancellationToken);
+        var result = await SendRequestAsync("model/list", new JsonObject { ["includeHidden"] = false }, cancellationToken);
+        if (!result.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException("Codex CLI 返回的模型列表格式不正确。");
+
+        return data.EnumerateArray()
+            .Where(item => !item.TryGetProperty("hidden", out var hidden) || hidden.ValueKind != JsonValueKind.True)
+            .Select(item =>
+            {
+                var model = item.TryGetProperty("model", out var modelElement) ? modelElement.GetString() : null;
+                var id = item.TryGetProperty("id", out var idElement) ? idElement.GetString() : null;
+                var displayName = item.TryGetProperty("displayName", out var nameElement) ? nameElement.GetString() : null;
+                var isDefault = item.TryGetProperty("isDefault", out var defaultElement) && defaultElement.ValueKind == JsonValueKind.True;
+                var value = string.IsNullOrWhiteSpace(model) ? id : model;
+                return string.IsNullOrWhiteSpace(value) ? null : new CodexModel(value, displayName ?? value, isDefault);
+            })
+            .Where(model => model is not null)
+            .Cast<CodexModel>()
+            .ToArray();
+    }
+
+    public async Task<string> UpdateCliAsync(CancellationToken cancellationToken)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
+        };
+        startInfo.ArgumentList.Add("/d");
+        startInfo.ArgumentList.Add("/s");
+        startInfo.ArgumentList.Add("/c");
+        startInfo.ArgumentList.Add("npm install --global --no-audit --no-fund @openai/codex@latest");
+
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动 npm 更新进程。");
+        var standardOutputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        var standardOutput = await standardOutputTask;
+        var standardError = await standardErrorTask;
+        if (process.ExitCode != 0)
+        {
+            var details = string.Join("\n", new[] { standardError.Trim(), standardOutput.Trim() }.Where(value => value.Length > 0));
+            throw new InvalidOperationException($"npm 更新 Codex CLI 失败（退出码 {process.ExitCode}）：{TruncateOutput(details)}");
+        }
+
+        await StopProcessAsync();
+        await StartAsync(cancellationToken);
+        var packagePath = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(_cliScript)!, "..", "package.json"));
+        using var package = JsonDocument.Parse(await File.ReadAllTextAsync(packagePath, cancellationToken));
+        var version = package.RootElement.TryGetProperty("version", out var versionElement) ? versionElement.GetString() : null;
+        return string.IsNullOrWhiteSpace(version) ? "Codex CLI 已更新并重启。" : $"Codex CLI 已更新到 {version}，app-server 已重启。";
+    }
+
+    private static string TruncateOutput(string output) => output.Length <= 700 ? output : output[..700] + "…";
+
     public async Task ResumeThreadAsync(string threadId, CancellationToken cancellationToken)
     {
         await StartAsync(cancellationToken);
@@ -143,7 +206,7 @@ internal sealed class CodexAppServer : IAsyncDisposable
     private JsonObject BuildThreadStartParams() => new()
     {
         ["cwd"] = _workDirectory,
-        ["model"] = "gpt-6-luna",
+        ["model"] = DefaultModel,
         ["approvalPolicy"] = "never",
         ["sandbox"] = "danger-full-access",
         ["ephemeral"] = false,
@@ -151,7 +214,7 @@ internal sealed class CodexAppServer : IAsyncDisposable
             $"用户要求发送截图时直接调用 qq_capture_screen()：如果指定了应用或进程名，把进程可执行文件名作为 processName 参数传入以截取该进程窗口；未指定时不传参数并捕获整个桌面。不要依赖电脑操作插件截图后再复制文件。需要模拟桌面交互时调用 qq_input(action, ...)：action 可为 type_text、press_key、click、move_mouse、scroll；键盘输入发送到当前焦点窗口，鼠标坐标使用虚拟屏幕绝对坐标。发送其他已有图片时，把图片复制到 {Path.Combine(_workDirectory, "qq-outbox")} 目录，再调用 qq_send_image(path)。工具成功后再告知用户已完成。遇到缺少信息、选项无法判断或需要用户决策时，调用 qq_ask_user(question) 把问题发给用户，并等待用户在 QQ 回复后继续当前任务。"
     };
 
-    public async Task<CodexTurnReply> AskAsync(string threadId, string userMessage, CancellationToken cancellationToken)
+    public async Task<CodexTurnReply> AskAsync(string threadId, string userMessage, string? model, CancellationToken cancellationToken)
     {
         await _turnLock.WaitAsync(cancellationToken);
         try
@@ -161,7 +224,7 @@ internal sealed class CodexAppServer : IAsyncDisposable
             _activeReasoningSummary = new StringBuilder();
             _activeImages = new ConcurrentQueue<CodexImage>();
             _activeTurn = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var started = await SendRequestAsync("turn/start", new JsonObject
+            var parameters = new JsonObject
             {
                 ["threadId"] = threadId,
                 ["input"] = new JsonArray(new JsonObject
@@ -169,7 +232,9 @@ internal sealed class CodexAppServer : IAsyncDisposable
                     ["type"] = "text",
                     ["text"] = userMessage
                 })
-            }, cancellationToken);
+            };
+            if (!string.IsNullOrWhiteSpace(model)) parameters["model"] = model;
+            var started = await SendRequestAsync("turn/start", parameters, cancellationToken);
             _activeTurnId = started.TryGetProperty("turn", out var turn) && turn.TryGetProperty("id", out var turnId)
                 ? turnId.GetString() : null;
             var reply = await _activeTurn.Task.WaitAsync(TimeSpan.FromMinutes(10), cancellationToken);
@@ -434,3 +499,5 @@ internal sealed class CodexAppServer : IAsyncDisposable
         }
     }
 }
+
+internal sealed record CodexModel(string Model, string DisplayName, bool IsDefault);

@@ -296,6 +296,47 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
             case "workdir":
                 response = $"当前工作目录：{codex.WorkDirectory}";
                 break;
+            case "models":
+            {
+                var models = await codex.ListModelsAsync(cancellationToken);
+                var session = await sessionStore.EnsureAsync(userId, codex.DefaultThreadId ??
+                    throw new InvalidOperationException("Codex 会话尚未启动。"), "默认会话", codex.CreateThreadAsync, cancellationToken);
+                var currentModel = session.Model ?? CodexAppServer.DefaultModel;
+                response = models.Count == 0 ? "Codex CLI 没有返回可用模型。" : "可用模型：\n" + string.Join("\n",
+                    models.Select((model, index) => $"{index + 1}. {(string.Equals(model.Model, currentModel, StringComparison.OrdinalIgnoreCase) ? "▶ " : string.Empty)}{model.DisplayName}（{model.Model}）{(model.IsDefault ? " [默认]" : string.Empty)}"))
+                    + $"\n当前模型：{currentModel}";
+                break;
+            }
+            case "switch-model":
+            {
+                var session = await sessionStore.EnsureAsync(userId, codex.DefaultThreadId ??
+                    throw new InvalidOperationException("Codex 会话尚未启动。"), "默认会话", codex.CreateThreadAsync, cancellationToken);
+                if (string.IsNullOrWhiteSpace(argument))
+                {
+                    response = $"当前模型：{session.Model ?? CodexAppServer.DefaultModel}。查看模型请发送 {bindings.GetValueOrDefault("models", "\\模型列表")}；切换时可输入模型名称或列表编号。";
+                    break;
+                }
+                var models = await codex.ListModelsAsync(cancellationToken);
+                var requested = argument.Trim();
+                CodexModel? selected = int.TryParse(requested, out var modelIndex) && modelIndex > 0 && modelIndex <= models.Count
+                    ? models[modelIndex - 1]
+                    : models.FirstOrDefault(model => string.Equals(model.Model, requested, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(model.DisplayName, requested, StringComparison.OrdinalIgnoreCase));
+                if (selected is null)
+                {
+                    response = $"找不到模型“{requested}”。先发送 {bindings.GetValueOrDefault("models", "\\模型列表")} 查看可用模型。";
+                    break;
+                }
+                await sessionStore.SetActiveModelAsync(userId, selected.Model, cancellationToken);
+                response = $"当前会话已切换到模型：{selected.DisplayName}（{selected.Model}）";
+                break;
+            }
+            case "update-codex":
+                await SendTextReplyAsync(context, "正在更新 Codex CLI，完成后会自动重启 app-server。", cancellationToken);
+                try { response = await codex.UpdateCliAsync(cancellationToken); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                { response = $"更新 Codex CLI 失败：{Truncate(ex.Message, 700)}"; }
+                break;
             case "recent":
             {
                 var page = conversationStore.GetPage(null, 12, userId, exactUserMatch: true);
@@ -333,7 +374,8 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
         ["status"] = "运行状态", ["sessions"] = "会话列表", ["switch-session"] = "切换会话",
         ["new-session"] = "新建会话", ["recent"] = "最近记录", ["current"] = "当前会话",
         ["rename"] = "重命名会话", ["workdir"] = "工作目录", ["screenshot"] = "发送截图",
-        ["retry"] = "重试上一条", ["stop"] = "停止任务"
+        ["retry"] = "重试上一条", ["stop"] = "停止任务", ["models"] = "模型列表",
+        ["switch-model"] = "切换模型", ["update-codex"] = "更新 Codex CLI"
     };
 
     private async Task ProcessCodexRequestAsync(ReplyContext context, string content, CancellationToken cancellationToken)
@@ -351,7 +393,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
         _activeRequests[userId] = requestCts;
         try
         {
-            var turnReply = await codex.AskAsync(session.ThreadId, content, requestCts.Token);
+            var turnReply = await codex.AskAsync(session.ThreadId, content, session.Model, requestCts.Token);
             var reply = turnReply.Text;
             Console.WriteLine($"Codex 已返回回复（{reply.Length} 字符，{turnReply.Images.Count} 张图片）。");
             WriteLogBlock("Codex 推理摘要", string.IsNullOrWhiteSpace(turnReply.ReasoningSummary)
@@ -400,7 +442,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
             var trigger = pair.Value.Trim();
             if (string.Equals(trimmed, trigger, StringComparison.OrdinalIgnoreCase))
             { action = pair.Key; argument = string.Empty; return true; }
-            if ((pair.Key is "switch-session" or "rename" or "new-session") &&
+            if ((pair.Key is "switch-session" or "rename" or "new-session" or "switch-model") &&
                 trimmed.StartsWith(trigger + " ", StringComparison.OrdinalIgnoreCase))
             { action = pair.Key; argument = trimmed[(trigger.Length + 1)..].Trim(); return true; }
         }

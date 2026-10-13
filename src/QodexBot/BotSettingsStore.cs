@@ -18,6 +18,9 @@ internal sealed class BotSettingsStore(string filePath)
             ["screenshot"] = "\\截图",
             ["retry"] = "\\重试",
             ["stop"] = "\\停止",
+            ["models"] = "\\模型列表",
+            ["switch-model"] = "\\模型",
+            ["update-codex"] = "\\更新Codex",
         };
 
     private readonly object m_sync = new();

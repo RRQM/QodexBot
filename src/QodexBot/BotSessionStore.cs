@@ -76,9 +76,10 @@ internal sealed class BotSessionStore(string filePath)
         {
             var oldSession = this.m_sessions.FirstOrDefault(item => item.Owner == owner && item.ThreadId == oldThreadId);
             var name = oldSession?.Name ?? "默认会话";
+            var model = oldSession?.Model;
             this.m_sessions.RemoveAll(item => item.Owner == owner && item.ThreadId == oldThreadId);
             this.SetActiveCore(owner, null);
-            var replacement = new BotSession(owner, newThreadId, name, DateTimeOffset.UtcNow, true);
+            var replacement = new BotSession(owner, newThreadId, name, DateTimeOffset.UtcNow, true, model);
             this.m_sessions.Add(replacement);
             await this.SaveCoreAsync(cancellationToken).ConfigureAwait(false);
             return replacement;
@@ -108,6 +109,21 @@ internal sealed class BotSessionStore(string filePath)
             var index = this.m_sessions.FindIndex(item => item.Owner == owner && item.IsActive);
             if (index < 0) return null;
             var updated = this.m_sessions[index] with { Name = name, UpdatedAt = DateTimeOffset.UtcNow };
+            this.m_sessions[index] = updated;
+            await this.SaveCoreAsync(cancellationToken).ConfigureAwait(false);
+            return updated;
+        }
+        finally { this.m_lock.Release(); }
+    }
+
+    public async Task<BotSession?> SetActiveModelAsync(string owner, string model, CancellationToken cancellationToken)
+    {
+        await this.m_lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var index = this.m_sessions.FindIndex(item => item.Owner == owner && item.IsActive);
+            if (index < 0) return null;
+            var updated = this.m_sessions[index] with { Model = model, UpdatedAt = DateTimeOffset.UtcNow };
             this.m_sessions[index] = updated;
             await this.SaveCoreAsync(cancellationToken).ConfigureAwait(false);
             return updated;
@@ -150,4 +166,5 @@ internal sealed class BotSessionStore(string filePath)
     }
 }
 
-internal sealed record BotSession(string Owner, string ThreadId, string Name, DateTimeOffset UpdatedAt, bool IsActive);
+internal sealed record BotSession(string Owner, string ThreadId, string Name, DateTimeOffset UpdatedAt, bool IsActive,
+    string? Model = null);
