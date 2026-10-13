@@ -6,42 +6,92 @@
   <meta name="color-scheme" content="light">
   <title>QodexBot 管理</title>
   <style>
-    :root{font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif;color:#202b3c;background:#f3f6fb;font-synthesis:none;text-rendering:optimizeLegibility}
-    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 18% 0,#e1eaff 0,transparent 34%),#f3f6fb}
-    .shell{width:min(100% - 32px,980px);margin:46px auto 64px}.top{display:flex;align-items:center;gap:14px;margin-bottom:25px}
-    .mark{width:46px;height:46px;border-radius:15px;background:#315de8;color:white;display:grid;place-items:center;font-weight:800;font-size:21px;box-shadow:0 8px 20px #315de83b}
-    h1{font-size:23px;margin:0 0 4px;letter-spacing:-.3px}.subtitle{margin:0;color:#728098;font-size:13px}
-    .layout{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:18px;align-items:start}
-    .history-card{margin-top:18px;padding:24px 27px}.history-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:16px}.history-head h2{font-size:15px;margin:0}.history-tools{display:flex;gap:9px;align-items:center}.history-tools input{width:230px;height:38px;border:1px solid #dbe2ed;border-radius:9px;padding:0 11px;font:inherit;font-size:12px}.button.secondary{height:38px;background:#edf2ff;color:#315de8;box-shadow:none}.button.secondary:hover{background:#e0e9ff}.history-list{display:flex;flex-direction:column;gap:10px}.history-item{border:1px solid #e9edf4;border-radius:12px;padding:13px 15px;background:#fff}.history-meta{display:flex;align-items:center;gap:9px;margin-bottom:8px;color:#7a879a;font-size:11px}.history-kind{font-weight:700;color:#315de8}.history-user{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.history-content{font-size:13px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;color:#34435a}.history-images{color:#8a5a00;font-size:11px;margin-top:6px}.history-empty{padding:32px 10px;text-align:center;color:#929cac;font-size:13px}.history-footer{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:16px}.history-note{font-size:11px;color:#8994a6}
-    .card{background:#fff;border:1px solid #e5eaf2;border-radius:18px;box-shadow:0 12px 40px #233c6810}.form-card{padding:25px 27px}.side{padding:22px;position:sticky;top:18px}
-    .section-title{font-size:15px;font-weight:700;margin:0 0 18px}.field{margin:0 0 17px}.field label{display:block;font-size:12px;font-weight:650;color:#45546c;margin-bottom:7px}
-    input[type=text],input[type=password],input[type=url],input[type=number]{width:100%;height:42px;border:1px solid #dbe2ed;border-radius:10px;padding:0 12px;color:#202b3c;background:#fff;font:inherit;font-size:13px;outline:none;transition:.15s}
-    input:focus{border-color:#6887ef;box-shadow:0 0 0 3px #4269e51b}input::placeholder{color:#a3adbd}.hint{font-size:11px;color:#8994a6;margin:6px 1px 0;line-height:1.55}
-    .row{display:grid;grid-template-columns:1fr 1fr;gap:14px}.toggle{display:flex;align-items:flex-start;gap:10px;margin:5px 0 18px;color:#3d4a60;font-size:13px;line-height:1.4}
-    .toggle input{accent-color:#315de8;margin:2px 0 0}.actions{display:flex;align-items:center;gap:12px;margin-top:22px}.button{height:42px;border:0;border-radius:10px;padding:0 18px;background:#315de8;color:white;font:inherit;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 7px 16px #315de82b}.button:hover{background:#244ed7}.button:disabled{opacity:.58;cursor:wait}
-    .message{font-size:12px;color:#66748a}.message.error{color:#c23f4e}.status-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.status-head h2{font-size:14px;margin:0}.badge{font-size:11px;border-radius:999px;padding:6px 9px;background:#edf1f6;color:#68758a;white-space:nowrap}.badge.ok{color:#18794e;background:#e5f6ec}.badge.warn{color:#9a6500;background:#fff2d7}.status-text{font-size:13px;line-height:1.55;margin:0 0 17px;color:#34435a;overflow-wrap:anywhere}.divider{height:1px;background:#edf0f5;margin:16px 0}.meta-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#96a0af;margin-bottom:6px}.filepath{font-size:11px;line-height:1.5;color:#78859a;overflow-wrap:anywhere}.footnote{margin:17px 2px 0;color:#929cac;font-size:11px;line-height:1.6}
-    @media(max-width:760px){.shell{margin:25px auto 40px}.layout{grid-template-columns:1fr}.side{position:static;grid-row:1}.form-card,.history-card{padding:22px}.row{grid-template-columns:1fr;gap:0}.history-head{align-items:stretch;flex-direction:column}.history-tools input{width:100%;flex:1}.history-tools{width:100%}}
+    :root{font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif;color:#17243a;background:#f4f7fc;font-synthesis:none;text-rendering:optimizeLegibility;--blue:#315eea;--blue-dark:#234bc7;--ink:#17243a;--muted:#718098;--line:#e5eaf2;--soft:#f7f9fd}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 8% 0,#e3ecff 0,transparent 32%),radial-gradient(ellipse at 92% 5%,#e8f6f3 0,transparent 28%),#f4f7fc}
+    .shell{width:min(100% - 40px,1160px);margin:38px auto 68px}.top{display:flex;align-items:center;gap:15px;margin-bottom:25px}
+    .mark{width:48px;height:48px;border-radius:16px;background:linear-gradient(145deg,#4778ff,#284fcf);color:#fff;display:grid;place-items:center;font-weight:800;font-size:22px;box-shadow:0 9px 22px #315de83d;letter-spacing:-1px}
+    .brand-copy{flex:1}.eyebrow{display:block;color:#5572b9;font-size:10px;font-weight:800;letter-spacing:.14em;margin-bottom:4px}
+    h1{font-size:24px;margin:0 0 4px;letter-spacing:-.5px;color:var(--ink)}.subtitle{margin:0;color:var(--muted);font-size:13px}
+    .local-tag{display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid #dce6f4;border-radius:999px;background:#ffffffb8;color:#53627a;font-size:11px;font-weight:650}
+    .local-dot{width:7px;height:7px;border-radius:50%;background:#2aa876;box-shadow:0 0 0 3px #2aa87620}
+    .layout{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:20px;align-items:start}
+    .card{background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 10px 32px #25395c0b}
+    .form-card{padding:26px 28px}.side{padding:23px;position:sticky;top:18px}
+    .section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px}
+    .section-kicker{display:block;color:#7485a0;font-size:10px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;margin-bottom:6px}
+    .section-title{font-size:17px;font-weight:750;letter-spacing:-.2px;margin:0;color:var(--ink)}
+    .section-copy{margin:5px 0 0;color:var(--muted);font-size:12px;line-height:1.55}
+    .section-number{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;background:#edf2ff;color:#4268d7;font-size:11px;font-weight:800}
+    .field{margin:0 0 17px}.field label{display:block;font-size:12px;font-weight:700;color:#3b4b64;margin-bottom:7px}
+    input[type=text],input[type=password],input[type=url],input[type=number],select{width:100%;height:42px;border:1px solid #dce3ed;border-radius:10px;padding:0 12px;color:var(--ink);background:#fff;font:inherit;font-size:13px;outline:none;transition:border-color .16s,box-shadow .16s,background .16s}
+    input:hover,select:hover{border-color:#c4d0e1}input:focus,select:focus{border-color:#6887ef;box-shadow:0 0 0 3px #4269e51b}input::placeholder{color:#a3adbd}
+    .hint{font-size:11px;color:#8491a5;margin:6px 1px 0;line-height:1.55}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:15px}
+    .toggle{display:flex;align-items:flex-start;gap:11px;margin:2px 0 23px;padding:14px 15px;border:1px solid #e8edf5;border-radius:12px;background:var(--soft);color:#3d4a60;font-size:12px;line-height:1.5}
+    .toggle input{accent-color:var(--blue);margin:3px 0 0;width:15px;height:15px;flex:0 0 auto}.toggle strong{font-size:12px}
+    .command-section{padding-top:19px;border-top:1px solid #edf0f5}.command-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:13px}
+    .command-heading h3{font-size:13px;margin:0;color:#2a3952}.command-heading p{font-size:11px;color:#8491a5;margin:4px 0 0;line-height:1.5}
+    .command-count{white-space:nowrap;color:#72809a;background:#f1f4f9;border-radius:8px;padding:5px 8px;font-size:10px;font-weight:700}
+    .command-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+    .command-field{min-width:0;margin:0;padding:11px;border:1px solid #e8edf4;border-radius:12px;background:#fff;transition:border-color .16s,box-shadow .16s,transform .16s}
+    .command-field:focus-within{border-color:#b9c9fb;box-shadow:0 4px 14px #365dd20c;transform:translateY(-1px)}
+    .command-name{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-height:35px;margin-bottom:8px!important;color:#34445d!important;font-size:11px!important}
+    .command-name small{font-size:10px;font-weight:450;color:#8b97a9;line-height:1.35}
+    .command-field input{height:36px;padding:0 9px;font-size:11px;border-radius:8px;background:#fbfcfe}
+    .actions{display:flex;align-items:center;gap:13px;margin-top:22px;padding-top:17px;border-top:1px solid #edf0f5}
+    .button{height:42px;border:0;border-radius:10px;padding:0 17px;background:var(--blue);color:#fff;font:inherit;font-size:12px;font-weight:750;cursor:pointer;box-shadow:0 6px 14px #315de82b;transition:background .16s,transform .16s,box-shadow .16s}
+    .button:hover{background:var(--blue-dark);transform:translateY(-1px);box-shadow:0 8px 17px #315de833}.button:active{transform:translateY(0)}.button:disabled{opacity:.58;cursor:wait;transform:none}
+    .button.secondary{height:37px;background:#eff3ff;color:#315de8;box-shadow:none}.button.secondary:hover{background:#e4ebff;box-shadow:none}
+    .message{font-size:11px;color:#66748a;line-height:1.5}.message.error{color:#c23f4e}
+    .status-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:17px}
+    .status-title{display:flex;align-items:center;gap:9px}.status-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:#edf2ff;color:#4165cf;font-size:14px;font-weight:800}
+    .status-head h2{font-size:13px;margin:0;color:#2a3952}.badge{font-size:10px;font-weight:750;border-radius:999px;padding:6px 9px;background:#edf1f6;color:#68758a;white-space:nowrap}
+    .badge.ok{color:#18794e;background:#e5f6ec}.badge.warn{color:#9a6500;background:#fff2d7}
+    .status-text{font-size:12px;line-height:1.65;margin:0;padding:12px;border-radius:11px;background:#f7f9fc;color:#34435a;overflow-wrap:anywhere}
+    .divider{height:1px;background:#edf0f5;margin:18px 0}.meta-label{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.12em;color:#96a0af;margin-bottom:7px}
+    .filepath{font-size:11px;line-height:1.55;color:#68778f;overflow-wrap:anywhere;background:#f7f9fc;border:1px solid #edf0f5;border-radius:9px;padding:9px 10px}
+    .footnote{margin:15px 1px 0;color:#8995a7;font-size:10px;line-height:1.65}
+    .history-card{margin-top:20px;padding:23px 27px}.history-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:17px}
+    .history-head h2{font-size:14px;margin:0;color:#2a3952}.history-tools{display:flex;gap:9px;align-items:center}
+    .history-tools input{width:250px;height:37px;font-size:11px}.history-list{display:flex;flex-direction:column;gap:9px}
+    .history-item{border:1px solid #e9edf4;border-radius:12px;padding:13px 15px;background:#fff;transition:border-color .16s,box-shadow .16s}
+    .history-item:hover{border-color:#d9e2f2;box-shadow:0 4px 12px #25395c08}
+    .history-meta{display:flex;align-items:center;gap:9px;margin-bottom:8px;color:#7a879a;font-size:10px}
+    .history-kind{font-weight:750;color:#315de8}.history-user{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .history-content{font-size:12px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;color:#34435a}
+    .history-images{color:#8a5a00;font-size:10px;margin-top:6px}.history-empty{padding:38px 10px;text-align:center;color:#929cac;font-size:12px}
+    .history-footer{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:15px}.history-note{font-size:10px;color:#8994a6}
+    @media(max-width:980px){.layout{grid-template-columns:minmax(0,1fr) 275px;gap:15px}.command-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:760px){.shell{width:min(100% - 28px,620px);margin:25px auto 42px}.top{align-items:flex-start;gap:12px;margin-bottom:19px}.mark{width:43px;height:43px;border-radius:14px}.local-tag{font-size:0;padding:10px}.local-dot{width:8px;height:8px}.layout{grid-template-columns:1fr}.side{position:static;grid-row:1}.form-card,.history-card{padding:21px 19px}.section-head{margin-bottom:18px}.row{grid-template-columns:1fr;gap:0}.command-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.command-name{min-height:39px}.history-head{align-items:stretch;flex-direction:column}.history-tools input{width:auto;flex:1}.history-tools{width:100%}}
+    @media(max-width:420px){h1{font-size:21px}.subtitle{font-size:11px}.command-list{grid-template-columns:1fr}.command-name{min-height:0}.history-tools{gap:7px}.history-tools .button{padding:0 12px}.actions{align-items:flex-start;flex-direction:column}.actions .button{width:100%}}
   </style>
 </head>
 <body>
   <main class="shell">
-    <header class="top"><div class="mark">Q</div><div><h1>QodexBot 管理</h1><p class="subtitle">配置 QQ 机器人并查看连接状态</p></div></header>
+    <header class="top">
+      <div class="mark" aria-hidden="true">Q</div>
+      <div class="brand-copy"><span class="eyebrow">QQ BOT · LOCAL CONTROL</span><h1>QodexBot 管理</h1><p class="subtitle">配置机器人、管理指令并查看运行记录</p></div>
+      <div class="local-tag"><span class="local-dot"></span>仅本机访问</div>
+    </header>
     <div class="layout">
       <section class="card form-card">
-        <h2 class="section-title">机器人接入</h2>
+        <div class="section-head"><div><span class="section-kicker">CONFIGURATION</span><h2 class="section-title">机器人接入</h2><p class="section-copy">设置 QQ 开放平台凭据与消息接收方式。</p></div><span class="section-number">01</span></div>
         <form id="settings-form">
-          <div class="row">
-            <div class="field"><label for="appId">App ID</label><input id="appId" name="appId" type="text" required autocomplete="off" placeholder="输入 QQ 机器人 App ID"></div>
-            <div class="field"><label for="appSecret">App Secret</label><input id="appSecret" name="appSecret" type="password" autocomplete="new-password" placeholder="留空则保留已保存的密钥"><p id="secret-hint" class="hint">密钥保存到本机 JSON 配置，不会从管理接口读回。</p></div>
-          </div>
-          <div class="field"><label for="environment">运行环境</label><select id="environment" name="sandbox" style="width:100%;height:42px;border:1px solid #dbe2ed;border-radius:10px;padding:0 11px;background:white;color:#202b3c;font:inherit;font-size:13px"><option value="false">正式环境</option><option value="true">沙箱环境</option></select></div>
+          <input id="appId" type="hidden">
+          <input id="appSecret" type="hidden">
+          <div class="field"><label>QQ 机器人账号</label><p id="binding-status" class="hint">尚未绑定 QQ 机器人。</p><button id="qr-start" class="button secondary" type="button">扫码绑定 QQ</button><div id="qr-panel" hidden style="margin-top:14px;padding:16px;border:1px solid #e5eaf2;border-radius:12px;text-align:center"><img id="qr-image" alt="QQ 扫码绑定二维码" style="display:block;width:min(100%,320px);margin:auto"><p id="qr-message" class="hint">请使用手机 QQ 扫描二维码。</p><button id="qr-cancel" class="button secondary" type="button">取消</button></div></div>
+          <div class="field"><label for="environment">运行环境</label><select id="environment" name="sandbox"><option value="false">正式环境</option><option value="true">沙箱环境</option></select></div>
           <div class="field"><label for="adminPort">管理页面端口</label><input id="adminPort" type="number" min="1" max="65535" required><p class="hint">端口保存在本地配置文件中；修改后需重启程序生效。</p></div>
           <label class="toggle"><input id="subscribeC2cMessages" type="checkbox"><span><strong>接收 C2C 私聊消息</strong><br><span class="hint">关闭后机器人会连接网关，但不订阅私聊消息事件。</span></span></label>
+          <div class="command-section">
+            <div class="command-heading"><div><h3>QQ 指令</h3><p>为动作设置触发命令，留空可禁用。参数示例：\切换 2、\标题 新名称。</p></div><span class="command-count">12 个动作</span></div>
+            <div id="command-list" class="command-list"></div>
+          </div>
           <div class="actions"><button id="save" class="button" type="submit">保存并应用</button><span id="message" class="message" role="status"></span></div>
         </form>
       </section>
       <aside class="card side">
-        <div class="status-head"><h2>运行状态</h2><span id="badge" class="badge">读取中</span></div>
+        <div class="status-head"><div class="status-title"><span class="status-icon" aria-hidden="true">●</span><h2>运行状态</h2></div><span id="badge" class="badge">读取中</span></div>
         <p id="runtime-status" class="status-text">正在读取机器人状态…</p>
         <div class="divider"></div>
         <div class="meta-label">配置文件</div><div id="config-file" class="filepath">—</div>
@@ -49,7 +99,7 @@
       </aside>
     </div>
     <section class="card history-card">
-      <div class="history-head"><div><h2>会话记录</h2><p class="hint">消息、回复、提问和图片发送事件保存在本机，重启后仍可查看。</p></div><div class="history-tools"><input id="history-filter" type="text" placeholder="按 QQ 用户 OpenID 筛选"><button id="history-refresh" class="button secondary" type="button">刷新</button></div></div>
+      <div class="history-head"><div><span class="section-kicker">ACTIVITY</span><h2>会话记录</h2><p class="hint">消息、回复、提问和图片发送事件保存在本机，重启后仍可查看。</p></div><div class="history-tools"><input id="history-filter" type="text" placeholder="按 QQ 用户 OpenID 筛选"><button id="history-refresh" class="button secondary" type="button">刷新</button></div></div>
       <div id="history-list" class="history-list"><div class="history-empty">正在读取会话记录…</div></div>
       <div class="history-footer"><button id="history-more" class="button secondary" type="button" hidden>加载更早记录</button><span id="history-note" class="history-note"></span></div>
     </section>
@@ -65,6 +115,8 @@
       return body;
     };
     const message = document.getElementById('message');
+    let qrSessionId = null;
+    let qrPollTimer = null;
     const setMessage = (text, error = false) => { message.textContent = text; message.className = `message${error ? ' error' : ''}`; };
     const historyList = document.getElementById('history-list');
     const historyMore = document.getElementById('history-more');
@@ -72,7 +124,23 @@
     let historyBeforeId = null;
     let historyHasMore = false;
     let historyViewingOlder = false;
-    const kindLabels = { user: 'QQ 用户', assistant: 'Codex 回复', reasoning: '推理摘要', question: 'Codex 提问', answer: '用户回答', image: '图片发送' };
+    const kindLabels = { user: 'QQ 用户', assistant: 'Codex 回复', reasoning: '推理摘要', question: 'Codex 提问', answer: '用户回答', image: '图片发送', command: '机器人指令' };
+    const commandDefinitions = [
+      ['help', '帮助菜单', '输入命令直接返回指令列表'], ['status', '运行状态', '查看机器人与 Codex 状态'],
+      ['sessions', '会话列表', '列出会话'], ['switch-session', '切换会话', '命令后附列表编号'], ['new-session', '新建会话', '开始新的 Codex 会话'],
+      ['recent', '最近记录', '查看最近的对话摘要'], ['current', '当前会话', '查看当前会话名称'],
+      ['rename', '重命名会话', '命令后附会话名称'], ['workdir', '工作目录', '查看当前工作目录'],
+      ['screenshot', '发送截图', '截取桌面并发送'], ['retry', '重试上一条', '重发最近一次请求'], ['stop', '停止任务', '中断当前任务']
+    ];
+    const commandList = document.getElementById('command-list');
+    for (const [key, title, help] of commandDefinitions) {
+      const field = document.createElement('div'); field.className = 'field command-field';
+      const label = document.createElement('label'); label.className = 'command-name'; label.htmlFor = `command-${key}`;
+      const name = document.createElement('span'); name.textContent = title;
+      const note = document.createElement('small'); note.textContent = help; label.append(name, note);
+      const input = document.createElement('input'); input.id = `command-${key}`; input.type = 'text'; input.maxLength = 32; input.autocomplete = 'off'; input.placeholder = '留空禁用';
+      field.append(label, input); commandList.append(field);
+    }
     function renderHistoryItem(item) {
       const article = document.createElement('article'); article.className = 'history-item';
       const meta = document.createElement('div'); meta.className = 'history-meta';
@@ -115,8 +183,49 @@
       document.getElementById('environment').value = String(Boolean(s.sandbox));
       document.getElementById('adminPort').value = s.adminPort || 17890;
       document.getElementById('subscribeC2cMessages').checked = s.subscribeC2cMessages !== false;
-      document.getElementById('secret-hint').textContent = s.secretConfigured ? '密钥已保存。留空可保留当前密钥；输入新值可替换。' : '尚未配置密钥，请填写 QQ 开放平台提供的 App Secret。';
+      for (const [key] of commandDefinitions) document.getElementById(`command-${key}`).value = s.commandBindings?.[key] ?? '';
+      document.getElementById('binding-status').textContent = s.isConfigured ? 'QQ 机器人已绑定。' : '尚未绑定 QQ 机器人，请使用手机 QQ 扫码。';
     }
+    function stopQrPolling() { if (qrPollTimer) clearTimeout(qrPollTimer); qrPollTimer = null; }
+    function showQrSession(session) {
+      const panel = document.getElementById('qr-panel');
+      panel.hidden = false;
+      document.getElementById('qr-message').textContent = session.message || '请使用手机 QQ 扫描二维码。';
+      const image = document.getElementById('qr-image');
+      if (session.qrSvg) image.src = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(session.qrSvg)))}`;
+      if (session.status === 'connected') {
+        stopQrPolling(); qrSessionId = null; panel.hidden = true;
+        setMessage(session.message || '扫码绑定成功。');
+        Promise.all([loadSettings(), loadStatus()]);
+        return;
+      }
+      if (['failed', 'cancelled', 'expired'].includes(session.status)) {
+        stopQrPolling(); qrSessionId = null;
+        document.getElementById('qr-start').disabled = false;
+        if (session.status !== 'cancelled') setMessage(session.message, true);
+        return;
+      }
+      qrPollTimer = setTimeout(pollQrSession, 1500);
+    }
+    async function pollQrSession() {
+      if (!qrSessionId) return;
+      try { showQrSession(await api(`/api/qq-login?sessionId=${encodeURIComponent(qrSessionId)}`)); }
+      catch (error) { stopQrPolling(); setMessage(error.message, true); document.getElementById('qr-start').disabled = false; }
+    }
+    document.getElementById('qr-start').addEventListener('click', async () => {
+      const button = document.getElementById('qr-start'); button.disabled = true; setMessage('正在获取二维码…');
+      try {
+        const session = await api('/api/qq-login', { method: 'POST', body: '{}' });
+        qrSessionId = session.sessionId; showQrSession(session);
+      } catch (error) { button.disabled = false; setMessage(error.message, true); }
+    });
+    document.getElementById('qr-cancel').addEventListener('click', async () => {
+      stopQrPolling();
+      if (qrSessionId) {
+        try { await api('/api/qq-login/cancel', { method: 'POST', body: JSON.stringify({ sessionId: qrSessionId }) }); } catch { }
+      }
+      qrSessionId = null; document.getElementById('qr-panel').hidden = true; document.getElementById('qr-start').disabled = false;
+    });
     async function loadStatus() {
       try {
         const data = await api('/api/status');
@@ -137,10 +246,11 @@
       setMessage('正在保存…');
       const payload = {
         appId: document.getElementById('appId').value,
-        appSecret: document.getElementById('appSecret').value,
+        appSecret: '',
         sandbox: document.getElementById('environment').value === 'true',
         subscribeC2cMessages: document.getElementById('subscribeC2cMessages').checked,
         adminPort: Number(document.getElementById('adminPort').value),
+        commandBindings: Object.fromEntries(commandDefinitions.map(([key]) => [key, document.getElementById(`command-${key}`).value.trim()])),
       };
       try {
         const result = await api('/api/settings', { method: 'POST', body: JSON.stringify(payload) });

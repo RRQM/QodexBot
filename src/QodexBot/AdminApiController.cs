@@ -13,11 +13,14 @@ internal sealed partial class AdminApiController : SingletonRpcServer
 {
     private readonly BotSettingsStore m_settingsStore;
     private readonly ConversationStore m_conversationStore;
+    private readonly QqQrLoginService m_qrLoginService;
     private readonly int m_activePort;
-    public AdminApiController(BotSettingsStore settingsStore, ConversationStore conversationStore, int activePort)
+    public AdminApiController(BotSettingsStore settingsStore, ConversationStore conversationStore,
+        QqQrLoginService qrLoginService, int activePort)
     {
         this.m_settingsStore = settingsStore;
         this.m_conversationStore = conversationStore;
+        this.m_qrLoginService = qrLoginService;
         this.m_activePort = activePort;
     }
 
@@ -80,6 +83,51 @@ internal sealed partial class AdminApiController : SingletonRpcServer
         });
 
     /// <summary>
+    /// 启动 QQ 扫码绑定流程。
+    /// </summary>
+    [Router("/api/qq-login")]
+    [WebApi(Method = HttpMethodType.Post)]
+    public Task StartQqLogin(IWebApiCallContext callContext) =>
+        this.HandleAsync(callContext, async () =>
+        {
+            var session = await this.m_qrLoginService.StartAsync(CancellationToken.None).ConfigureAwait(false);
+            await this.WriteJsonAsync(callContext, 200, session, WebJsonContext.Default.QqQrLoginView).ConfigureAwait(false);
+        });
+
+    /// <summary>
+    /// 查询 QQ 扫码绑定状态。
+    /// </summary>
+    [Router("/api/qq-login")]
+    [WebApi(Method = HttpMethodType.Get)]
+    public Task GetQqLogin(IWebApiCallContext callContext) =>
+        this.HandleAsync(callContext, async () =>
+        {
+            var requestUrl = callContext.HttpContext.Request.URL;
+            if (!Uri.TryCreate(requestUrl, UriKind.Absolute, out var uri))
+                uri = new Uri(new Uri($"http://127.0.0.1:{this.m_activePort}/"), requestUrl);
+            var query = HttpUtility.ParseQueryString(uri.Query);
+            var sessionId = query.Get("sessionId") ?? string.Empty;
+            var session = this.m_qrLoginService.Get(sessionId);
+            await this.WriteJsonAsync(callContext, 200, session, WebJsonContext.Default.QqQrLoginView).ConfigureAwait(false);
+        });
+
+    /// <summary>
+    /// 取消正在进行的 QQ 扫码绑定。
+    /// </summary>
+    [Router("/api/qq-login/cancel")]
+    [WebApi(Method = HttpMethodType.Post)]
+    public Task CancelQqLogin(IWebApiCallContext callContext) =>
+        this.HandleAsync(callContext, async () =>
+        {
+            var body = await callContext.HttpContext.Request.GetContentAsync(CancellationToken.None).ConfigureAwait(false);
+            var input = JsonSerializer.Deserialize(Encoding.UTF8.GetString(body.Span), WebJsonContext.Default.QqQrLoginCancelInput);
+            if (input is null)
+                throw new ArgumentException("扫码会话 ID 缺失。");
+            var session = await this.m_qrLoginService.CancelAsync(input.SessionId).ConfigureAwait(false);
+            await this.WriteJsonAsync(callContext, 200, session, WebJsonContext.Default.QqQrLoginView).ConfigureAwait(false);
+        });
+
+    /// <summary>
     /// 获取本机保存的会话记录，支持向较早记录翻页和按用户 OpenID 筛选。
     /// </summary>
     [Router("/api/conversations")]
@@ -106,6 +154,11 @@ internal sealed partial class AdminApiController : SingletonRpcServer
             await action().ConfigureAwait(false);
         }
         catch (ArgumentException ex)
+        {
+            await this.WriteJsonAsync(callContext, 400, new ApiErrorResponse(ex.Message),
+                WebJsonContext.Default.ApiErrorResponse).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException ex)
         {
             await this.WriteJsonAsync(callContext, 400, new ApiErrorResponse(ex.Message),
                 WebJsonContext.Default.ApiErrorResponse).ConfigureAwait(false);

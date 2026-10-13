@@ -1,0 +1,9 @@
+{
+  "name": "qodexbot-qq-connector",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@tencent-connect/qqbot-connector": "1.2.0",
+    "qrcode": "1.5.4"
+  }
+}

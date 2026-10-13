@@ -3,6 +3,23 @@ using System.Text.Json;
 
 internal sealed class BotSettingsStore(string filePath)
 {
+    internal static readonly IReadOnlyDictionary<string, string> DefaultCommandBindings =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["help"] = "\\",
+            ["status"] = "\\状态",
+            ["sessions"] = "\\会话",
+            ["switch-session"] = "\\切换",
+            ["new-session"] = "\\新建",
+            ["recent"] = "\\最近",
+            ["current"] = "\\当前",
+            ["rename"] = "\\标题",
+            ["workdir"] = "\\工作目录",
+            ["screenshot"] = "\\截图",
+            ["retry"] = "\\重试",
+            ["stop"] = "\\停止",
+        };
+
     private readonly object m_sync = new();
     private readonly SemaphoreSlim m_saveLock = new(1, 1);
     private readonly Channel<BotConfig?> m_changes = Channel.CreateBounded<BotConfig?>(new BoundedChannelOptions(1)
@@ -89,7 +106,12 @@ internal sealed class BotSettingsStore(string filePath)
         var configured = this.GetBotConfig() is not null;
         return new BotSettingsView(settings.AppId, settings.Sandbox, settings.SubscribeC2cMessages,
             settings.AdminPort, !string.IsNullOrEmpty(settings.AppSecret), configured,
-            this.m_configurationError ?? string.Empty);
+            this.m_configurationError ?? string.Empty, NormalizeCommandBindings(settings.CommandBindings));
+    }
+
+    public IReadOnlyDictionary<string, string> GetCommandBindings()
+    {
+        lock (this.m_sync) return NormalizeCommandBindings(this.m_settings.CommandBindings);
     }
 
     public async Task<BotSettingsView> SaveAsync(BotSettingsInput input, CancellationToken cancellationToken)
@@ -110,8 +132,9 @@ internal sealed class BotSettingsStore(string filePath)
                 Sandbox = input.Sandbox,
                 SubscribeC2cMessages = input.SubscribeC2cMessages,
                 AdminPort = input.AdminPort,
+                CommandBindings = NormalizeCommandBindings(input.CommandBindings ?? current.CommandBindings),
             };
-            Validate(settings);
+            Validate(settings, credentialsRequired: false);
 
             var directory = Path.GetDirectoryName(this.FilePath)
                 ?? throw new InvalidOperationException("配置文件路径无效。");
@@ -143,6 +166,61 @@ internal sealed class BotSettingsStore(string filePath)
         }
     }
 
+    public async Task<BotSettingsView> SaveQrCredentialsAsync(string appId, string appSecret, CancellationToken cancellationToken)
+    {
+        await this.m_saveLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            BotSettingsDocument current;
+            lock (this.m_sync)
+            {
+                current = this.m_settings;
+            }
+
+            var settings = new BotSettingsDocument
+            {
+                AppId = appId.Trim(),
+                AppSecret = appSecret,
+                Sandbox = current.Sandbox,
+                SubscribeC2cMessages = current.SubscribeC2cMessages,
+                AdminPort = current.AdminPort,
+                CommandBindings = NormalizeCommandBindings(current.CommandBindings),
+            };
+            Validate(settings);
+            await this.SaveDocumentAsync(settings, cancellationToken).ConfigureAwait(false);
+
+            lock (this.m_sync)
+            {
+                this.m_settings = settings;
+            }
+            this.m_configurationError = null;
+            this.m_changes.Writer.TryWrite(this.GetBotConfig());
+            return this.GetView();
+        }
+        finally
+        {
+            this.m_saveLock.Release();
+        }
+    }
+
+    private async Task SaveDocumentAsync(BotSettingsDocument settings, CancellationToken cancellationToken)
+    {
+        var directory = Path.GetDirectoryName(this.FilePath)
+            ?? throw new InvalidOperationException("配置文件路径无效。");
+        Directory.CreateDirectory(directory);
+        var temporaryPath = this.FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            var json = JsonSerializer.Serialize(settings, WebJsonContext.Default.BotSettingsDocument);
+            await File.WriteAllTextAsync(temporaryPath, json, cancellationToken).ConfigureAwait(false);
+            File.Move(temporaryPath, this.FilePath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
+    }
+
     public IAsyncEnumerable<BotConfig?> ReadChangesAsync(CancellationToken cancellationToken) =>
         this.m_changes.Reader.ReadAllAsync(cancellationToken);
 
@@ -151,12 +229,26 @@ internal sealed class BotSettingsStore(string filePath)
         Volatile.Write(ref this.m_runtimeStatus, status);
     }
 
-    private static void Validate(BotSettingsDocument settings)
+    private static void Validate(BotSettingsDocument settings, bool credentialsRequired = true)
     {
-        if (string.IsNullOrWhiteSpace(settings.AppId)) throw new ArgumentException("AppID 不能为空。");
-        if (string.IsNullOrWhiteSpace(settings.AppSecret)) throw new ArgumentException("AppSecret 不能为空。");
+        if (credentialsRequired && string.IsNullOrWhiteSpace(settings.AppId)) throw new ArgumentException("AppID 不能为空。");
+        if (credentialsRequired && string.IsNullOrWhiteSpace(settings.AppSecret)) throw new ArgumentException("AppSecret 不能为空。");
         if (settings.AdminPort is <= 0 or > 65535) throw new ArgumentException("管理端口必须在 1 到 65535 之间。");
+        var commands = settings.CommandBindings.Values.Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim()).ToArray();
+        if (commands.Any(value => value.Length > 32 || value.Any(char.IsControl)))
+            throw new ArgumentException("指令命令最多 32 个字符，且不能包含换行或控制字符。");
+        if (commands.Distinct(StringComparer.OrdinalIgnoreCase).Count() != commands.Length)
+            throw new ArgumentException("不同动作不能绑定相同的命令。");
+    }
 
+    private static Dictionary<string, string> NormalizeCommandBindings(Dictionary<string, string>? supplied)
+    {
+        var result = DefaultCommandBindings.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        if (supplied is null) return result;
+        foreach (var (key, value) in supplied)
+            if (DefaultCommandBindings.ContainsKey(key)) result[key] = value?.Trim() ?? string.Empty;
+        return result;
     }
 
     internal sealed class BotSettingsDocument
@@ -170,6 +262,8 @@ internal sealed class BotSettingsStore(string filePath)
         public bool Sandbox { get; set; }
         public bool SubscribeC2cMessages { get; set; } = true;
         public int AdminPort { get; set; } = 17890;
+        public Dictionary<string, string> CommandBindings { get; set; } = DefaultCommandBindings
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
     }
 }
 
@@ -178,7 +272,8 @@ internal sealed record BotSettingsInput(
     string? AppSecret,
     bool Sandbox,
     bool SubscribeC2cMessages,
-    int AdminPort);
+    int AdminPort,
+    Dictionary<string, string>? CommandBindings = null);
 
 internal sealed record BotSettingsView(
     string AppId,
@@ -187,4 +282,5 @@ internal sealed record BotSettingsView(
     int AdminPort,
     bool SecretConfigured,
     bool IsConfigured,
-    string ConfigurationError);
+    string ConfigurationError,
+    Dictionary<string, string> CommandBindings);

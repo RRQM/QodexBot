@@ -10,11 +10,15 @@ using System.Text.Json.Nodes;
 [JsonSerializable(typeof(ApiErrorResponse))]
 [JsonSerializable(typeof(ApiSaveSettingsResponse))]
 [JsonSerializable(typeof(ApiStatusResponse))]
+[JsonSerializable(typeof(QqQrLoginView))]
+[JsonSerializable(typeof(QqQrLoginCancelInput))]
 internal partial class WebJsonContext : JsonSerializerContext
 {
 }
 
 [JsonSerializable(typeof(ConversationRecord))]
+[JsonSerializable(typeof(BotSession))]
+[JsonSerializable(typeof(List<BotSession>))]
 [JsonSerializable(typeof(ConversationPage))]
 [JsonSerializable(typeof(JsonRpcMessage))]
 [JsonSerializable(typeof(JsonObject))]

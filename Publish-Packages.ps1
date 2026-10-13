@@ -49,6 +49,12 @@ $null = New-Item -ItemType Directory -Path $publishDir -Force
 $null = New-Item -ItemType Directory -Path $packagesRoot -Force
 
 Write-Host "Publishing win-x64 (Native AOT)"
+$connectorDirectory = Join-Path $scriptRoot "src/QodexBot/qq-connector"
+& npm ci --omit=dev --prefix $connectorDirectory
+if ($LASTEXITCODE -ne 0) {
+    throw "npm ci failed for the QQ QR connector"
+}
+
 $publishArguments = @(
     "publish"
     $projectFullPath

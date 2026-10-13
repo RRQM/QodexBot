@@ -74,7 +74,7 @@ internal sealed class ConversationStore
     /// <summary>
     /// 读取按时间正序排列的一页对话事件。
     /// </summary>
-    public ConversationPage GetPage(long? beforeId, int limit, string? userOpenId)
+    public ConversationPage GetPage(long? beforeId, int limit, string? userOpenId, bool exactUserMatch = false)
     {
         limit = Math.Clamp(limit, 1, 100);
         lock (this.m_syncRoot)
@@ -82,12 +82,20 @@ internal sealed class ConversationStore
             IEnumerable<ConversationRecord> query = this.m_records;
             if (beforeId.HasValue) query = query.Where(record => record.Id < beforeId.Value);
             if (!string.IsNullOrWhiteSpace(userOpenId))
-                query = query.Where(record => record.UserOpenId.Contains(userOpenId, StringComparison.OrdinalIgnoreCase));
+                query = query.Where(record => exactUserMatch
+                    ? string.Equals(record.UserOpenId, userOpenId, StringComparison.Ordinal)
+                    : record.UserOpenId.Contains(userOpenId, StringComparison.OrdinalIgnoreCase));
             var matching = query.ToArray();
             var records = matching.TakeLast(limit).ToArray();
             return new ConversationPage(records, matching.Length > records.Length,
                 records.Length == 0 ? null : records[0].Id);
         }
+    }
+
+    public string? GetLatestContent(string userOpenId, string kind)
+    {
+        lock (this.m_syncRoot)
+            return this.m_records.LastOrDefault(record => record.UserOpenId == userOpenId && record.Kind == kind)?.Content;
     }
 }
 

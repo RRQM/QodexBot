@@ -15,6 +15,14 @@
 
   <ItemGroup>
     <EmbeddedResource Include="wwwroot\admin.html" LogicalName="QodexBot.wwwroot.admin.html" />
+    <Content Include="qq-connector\login.mjs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="qq-connector\package.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="qq-connector\package-lock.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('qq-connector\node_modules')">
+    <Content Include="qq-connector\node_modules\**\*" CopyToOutputDirectory="PreserveNewest"
+             Link="qq-connector\node_modules\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

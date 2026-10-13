@@ -5,7 +5,8 @@ QodexBot 将 QQ 机器人 C2C 单聊消息转发给本机 Codex CLI，并把 Cod
 ## 功能
 
 - 通过 QQ 机器人开放平台接收和回复 C2C 单聊消息，支持正式环境与沙箱环境。
-- 为每次运行维持一个 Codex app-server 会话，连续对话保留上下文。
+- 为每次运行维持一个 Codex app-server 进程，并为每位 QQ 用户分别保存会话和上下文。
+- 在 QQ 中通过可配置指令查看状态、管理个人会话、重试或停止任务，以及直接发送桌面截图。
 - 将 Codex 生成的图片或本机图片直接发回 QQ。
 - 向 Codex 提供截图、键鼠操作和向 QQ 用户提问等 MCP 工具。
 - 提供本机管理页面和可分页查询的会话记录。
@@ -19,10 +20,9 @@ QodexBot 将 QQ 机器人 C2C 单聊消息转发给本机 Codex CLI，并把 Cod
 
 ## 首次配置
 
-1. 在 [QQ 机器人开放平台](https://q.qq.com/) 创建机器人并获取 AppID 和 AppSecret。
-2. 按平台要求开通 C2C 单聊权限，在事件订阅中启用 `C2C_MESSAGE_CREATE`。可用场景取决于开发者主体和平台审批。
-3. 打开管理页面，填写 AppID、AppSecret，选择正式或沙箱环境，并启用 C2C 消息订阅。
-4. 保存后机器人配置会自动应用并重连；修改管理端口后需要重启程序。
+1. 打开管理页面，点击“扫码绑定 QQ”，使用手机 QQ 扫描并确认。
+2. 选择正式或沙箱环境，并按平台要求开通 C2C 单聊权限、启用 `C2C_MESSAGE_CREATE` 事件订阅。可用场景取决于开发者主体和平台审批。
+3. 扫码成功后，程序会在本机保存平台返回的 AppID 和 AppSecret，并自动连接机器人。修改管理端口后需要重启程序。
 
 AppSecret 以明文保存在运行目录的 `settings.json` 中。管理页面不会读回已保存的密钥；修改其他设置时，AppSecret 留空即可保留现有值。请妥善保护程序目录和 Windows 用户账户。
 
@@ -37,7 +37,28 @@ npm install -g @openai/codex
 codex login
 ```
 
-程序按当前用户的 npm 全局安装路径查找 `@openai/codex/bin/codex.js`，并通过 `node.exe` 启动 `codex app-server`。机器人收到 QQ 网关 READY 后会启动 Codex 会话；同一进程运行期间，后续单聊消息会继续使用该会话。Codex 工作目录为 Windows 临时目录下的 `QodexBot` 文件夹。
+程序按当前用户的 npm 全局安装路径查找 `@openai/codex/bin/codex.js`，并通过 `node.exe` 启动 `codex app-server`。机器人收到 QQ 网关 READY 后会启动 app-server；每位 QQ 用户的后续消息会进入自己的 Codex 会话。Codex 工作目录为 Windows 临时目录下的 `QodexBot` 文件夹。
+
+## QQ 指令
+
+在管理页面的“QQ 指令”区域可为每个动作设置命令文本，留空可禁用该动作。默认绑定如下：
+
+| 默认命令 | 动作 |
+| --- | --- |
+| `\` | 显示指令列表 |
+| `\状态` | 查看机器人和 Codex 状态 |
+| `\会话` | 列出当前 QQ 用户自己的会话 |
+| `\切换 2` | 切换到会话列表中的第 2 项 |
+| `\新建 [名称]` | 创建并切换到新会话 |
+| `\最近` | 查看最近的对话摘要 |
+| `\当前` | 查看当前会话名称 |
+| `\标题 新名称` | 重命名当前会话 |
+| `\工作目录` | 查看 Codex 工作目录 |
+| `\截图` | 直接截取桌面并发送到 QQ |
+| `\重试` | 重发最近一次请求 |
+| `\停止` | 中断当前 Codex 任务 |
+
+指令在机器人端直接处理，不会发给 Codex。普通消息仍会进入 Codex。每位 QQ 用户有独立的会话列表和当前会话；会话选择保存在程序目录的 `sessions.json` 中。
 
 ## QQ 和桌面 MCP 工具
 
@@ -57,8 +78,11 @@ codex login
 开发环境需要 .NET 10 SDK、Node.js 和已登录的 Codex CLI。在仓库根目录运行：
 
 ```powershell
+npm ci --omit=dev --prefix src/QodexBot/qq-connector
 dotnet run --project src/QodexBot/QodexBot.csproj
 ```
+
+发布包会包含扫码绑定所需的 Node.js 依赖；扫码时需要 Node.js 18 或更高版本可从 PATH 启动。
 
 运行测试：
 

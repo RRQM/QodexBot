@@ -3,7 +3,8 @@ internal sealed class QqBotSupervisor(
     BotSettingsStore settingsStore,
     CodexAppServer codex,
     LocalToolIpcServer mcp,
-    ConversationStore conversationStore)
+    ConversationStore conversationStore,
+    BotSessionStore sessionStore)
 {
     private readonly BotSettingsStore m_settingsStore = settingsStore;
     private ActiveBot? m_activeBot;
@@ -36,7 +37,7 @@ internal sealed class QqBotSupervisor(
         {
             var view = this.m_settingsStore.GetView();
             this.m_settingsStore.SetRuntimeStatus(string.IsNullOrWhiteSpace(view.ConfigurationError)
-                ? "请在管理页填写 QQ AppID 和 AppSecret。"
+                ? "请在管理页使用 QQ 扫码绑定机器人。"
                 : $"配置有误：{view.ConfigurationError}");
             return;
         }
@@ -44,7 +45,9 @@ internal sealed class QqBotSupervisor(
         try
         {
             var botCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var bot = new QqBotClient(http, config, codex, mcp, conversationStore, this.m_settingsStore.SetRuntimeStatus);
+            var bot = new QqBotClient(http, config, codex, mcp, conversationStore, sessionStore,
+                this.m_settingsStore.GetCommandBindings, () => this.m_settingsStore.RuntimeStatus,
+                this.m_settingsStore.SetRuntimeStatus);
             var runTask = bot.RunAsync(botCancellation.Token);
             this.m_activeBot = new ActiveBot(botCancellation, runTask);
             this.m_settingsStore.SetRuntimeStatus("正在使用已保存的设置启动 QQ 机器人。");

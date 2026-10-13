@@ -21,9 +21,12 @@ internal sealed class CodexAppServer : IAsyncDisposable
     private StringBuilder? _activeReasoningSummary;
     private ConcurrentQueue<CodexImage>? _activeImages;
     private TaskCompletionSource<string>? _activeTurn;
+    private string? _activeTurnId;
     private string? _mcpPipeName;
     private ReplyContext? _activeToolContext;
     public ReplyContext? ActiveToolContext => Volatile.Read(ref _activeToolContext);
+    public string? DefaultThreadId => _threadId;
+    public string WorkDirectory => _workDirectory;
 
     public void SetMcpPipeName(string pipeName) => _mcpPipeName = pipeName;
     public void SetActiveToolContext(ReplyContext? context) => Volatile.Write(ref _activeToolContext, context);
@@ -92,16 +95,7 @@ internal sealed class CodexAppServer : IAsyncDisposable
                 ["capabilities"] = new JsonObject()
             }, cancellationToken);
             await SendNotificationAsync("initialized", new JsonObject(), cancellationToken);
-            var threadResult = await SendRequestAsync("thread/start", new JsonObject
-            {
-                ["cwd"] = _workDirectory,
-                ["model"] = "gpt-6-luna",
-                ["approvalPolicy"] = "never",
-                ["sandbox"] = "danger-full-access",
-                ["ephemeral"] = false,
-                ["developerInstructions"] = $"你是 QQ 单聊助手，直接处理用户的问题和任务，优先使用中文。\n\n" +
-                    $"用户要求发送截图时直接调用 qq_capture_screen()：如果指定了应用或进程名，把进程可执行文件名作为 processName 参数传入以截取该进程窗口；未指定时不传参数并捕获整个桌面。不要依赖电脑操作插件截图后再复制文件。需要模拟桌面交互时调用 qq_input(action, ...)：action 可为 type_text、press_key、click、move_mouse、scroll；键盘输入发送到当前焦点窗口，鼠标坐标使用虚拟屏幕绝对坐标。发送其他已有图片时，把图片复制到 {Path.Combine(_workDirectory, "qq-outbox")} 目录，再调用 qq_send_image(path)。工具成功后再告知用户已完成。遇到缺少信息、选项无法判断或需要用户决策时，调用 qq_ask_user(question) 把问题发给用户，并等待用户在 QQ 回复后继续当前任务。"
-            }, cancellationToken);
+            var threadResult = await SendRequestAsync("thread/start", BuildThreadStartParams(), cancellationToken);
             _threadId = threadResult.GetProperty("thread").GetProperty("id").GetString()
                 ?? throw new InvalidOperationException("Codex app-server 没有返回 thread id。");
             Console.WriteLine($"常驻 Codex CLI 已启动，会话：{_threadId}");
@@ -115,7 +109,49 @@ internal sealed class CodexAppServer : IAsyncDisposable
         finally { _startLock.Release(); }
     }
 
-    public async Task<CodexTurnReply> AskAsync(string userMessage, CancellationToken cancellationToken)
+    public async Task<string> CreateThreadAsync(CancellationToken cancellationToken)
+    {
+        await StartAsync(cancellationToken);
+        var result = await SendRequestAsync("thread/start", BuildThreadStartParams(), cancellationToken);
+        return result.GetProperty("thread").GetProperty("id").GetString()
+            ?? throw new InvalidOperationException("Codex app-server 没有返回新会话 ID。");
+    }
+
+    public async Task ResumeThreadAsync(string threadId, CancellationToken cancellationToken)
+    {
+        await StartAsync(cancellationToken);
+        await SendRequestAsync("thread/resume", new JsonObject { ["threadId"] = threadId }, cancellationToken);
+    }
+
+    public async Task SetThreadNameAsync(string threadId, string name, CancellationToken cancellationToken)
+    {
+        await StartAsync(cancellationToken);
+        await SendRequestAsync("thread/name/set", new JsonObject { ["threadId"] = threadId, ["name"] = name }, cancellationToken);
+    }
+
+    public async Task InterruptTurnAsync(string threadId, CancellationToken cancellationToken)
+    {
+        var turnId = Volatile.Read(ref _activeTurnId);
+        if (turnId is null) return;
+        await SendRequestAsync("turn/interrupt", new JsonObject
+        {
+            ["threadId"] = threadId,
+            ["turnId"] = turnId
+        }, cancellationToken);
+    }
+
+    private JsonObject BuildThreadStartParams() => new()
+    {
+        ["cwd"] = _workDirectory,
+        ["model"] = "gpt-6-luna",
+        ["approvalPolicy"] = "never",
+        ["sandbox"] = "danger-full-access",
+        ["ephemeral"] = false,
+        ["developerInstructions"] = $"你是 QQ 单聊助手，直接处理用户的问题和任务，优先使用中文。\n\n" +
+            $"用户要求发送截图时直接调用 qq_capture_screen()：如果指定了应用或进程名，把进程可执行文件名作为 processName 参数传入以截取该进程窗口；未指定时不传参数并捕获整个桌面。不要依赖电脑操作插件截图后再复制文件。需要模拟桌面交互时调用 qq_input(action, ...)：action 可为 type_text、press_key、click、move_mouse、scroll；键盘输入发送到当前焦点窗口，鼠标坐标使用虚拟屏幕绝对坐标。发送其他已有图片时，把图片复制到 {Path.Combine(_workDirectory, "qq-outbox")} 目录，再调用 qq_send_image(path)。工具成功后再告知用户已完成。遇到缺少信息、选项无法判断或需要用户决策时，调用 qq_ask_user(question) 把问题发给用户，并等待用户在 QQ 回复后继续当前任务。"
+    };
+
+    public async Task<CodexTurnReply> AskAsync(string threadId, string userMessage, CancellationToken cancellationToken)
     {
         await _turnLock.WaitAsync(cancellationToken);
         try
@@ -125,15 +161,17 @@ internal sealed class CodexAppServer : IAsyncDisposable
             _activeReasoningSummary = new StringBuilder();
             _activeImages = new ConcurrentQueue<CodexImage>();
             _activeTurn = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-            await SendRequestAsync("turn/start", new JsonObject
+            var started = await SendRequestAsync("turn/start", new JsonObject
             {
-                ["threadId"] = _threadId,
+                ["threadId"] = threadId,
                 ["input"] = new JsonArray(new JsonObject
                 {
                     ["type"] = "text",
                     ["text"] = userMessage
                 })
             }, cancellationToken);
+            _activeTurnId = started.TryGetProperty("turn", out var turn) && turn.TryGetProperty("id", out var turnId)
+                ? turnId.GetString() : null;
             var reply = await _activeTurn.Task.WaitAsync(TimeSpan.FromMinutes(10), cancellationToken);
             return new CodexTurnReply(string.IsNullOrWhiteSpace(reply) ? "Codex 没有返回文本。" : reply,
                 _activeImages.ToArray(), _activeReasoningSummary.ToString());
@@ -147,6 +185,7 @@ internal sealed class CodexAppServer : IAsyncDisposable
         finally
         {
             _activeTurn = null;
+            _activeTurnId = null;
             _activeReply = null;
             _activeReasoningSummary = null;
             _activeImages = null;

@@ -6,7 +6,9 @@ using System.Text;
 using System.Text.Json;
 
 internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppServer codex,
-    LocalToolIpcServer mcp, ConversationStore conversationStore, Action<string> statusChanged)
+    LocalToolIpcServer mcp, ConversationStore conversationStore, BotSessionStore sessionStore,
+    Func<IReadOnlyDictionary<string, string>> getCommandBindings, Func<string> getRuntimeStatus,
+    Action<string> statusChanged)
 {
     private static readonly Uri TokenUri = new("https://bots.qq.com/app/getAppAccessToken");
     private static readonly Uri ProductionApi = new("https://api.sgroup.qq.com/");
@@ -15,6 +17,8 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
     private readonly SemaphoreSlim _tokenLock = new(1, 1);
     private readonly SemaphoreSlim _requestLock = new(1, 1);
     private readonly ConcurrentDictionary<string, PendingQuestion> _questions = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _lastRequests = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _activeRequests = new(StringComparer.Ordinal);
     private string? _accessToken;
     private DateTimeOffset _tokenExpiresAt;
 
@@ -186,6 +190,31 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
             return;
         }
 
+        if (TryMatchCommand(content, getCommandBindings(), out var command, out var argument))
+        {
+            var context = new ReplyContext(messageId, userOpenId);
+            if (command == "stop")
+            {
+                var stopped = false;
+                if (_activeRequests.TryGetValue(userOpenId, out var active))
+                {
+                    var session = await sessionStore.GetActiveAsync(userOpenId, cancellationToken);
+                    if (session is not null)
+                    {
+                        try { await codex.InterruptTurnAsync(session.ThreadId, cancellationToken); stopped = true; }
+                        catch (Exception ex) when (ex is not OperationCanceledException) { Console.Error.WriteLine($"中断 Codex 任务失败：{ex.Message}"); }
+                    }
+                    try { active.Cancel(); } catch (ObjectDisposedException) { }
+                }
+                await SendTextReplyAsync(context, stopped ? "已请求停止当前任务。" : "当前没有正在运行的任务。", cancellationToken);
+                return;
+            }
+            await _requestLock.WaitAsync(cancellationToken);
+            try { await ExecuteCommandAsync(command, argument, context, cancellationToken); }
+            finally { _requestLock.Release(); }
+            return;
+        }
+
         if (_questions.TryGetValue(userOpenId, out var pendingQuestion))
         {
             var answer = string.IsNullOrWhiteSpace(content) ? "（用户发送了空回复）" : content;
@@ -198,30 +227,172 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
             }
         }
 
-        WriteLogBlock($"QQ 输入 ({userOpenId})", content);
-        await this.RecordConversationAsync(userOpenId, "user", content, cancellationToken: cancellationToken);
+        if (content.TrimStart().StartsWith('\\'))
+        {
+            await SendTextReplyAsync(new ReplyContext(messageId, userOpenId), "未识别的指令。发送 \\ 查看可用指令。", cancellationToken);
+            return;
+        }
+
         await _requestLock.WaitAsync(cancellationToken);
+        try { await ProcessCodexRequestAsync(new ReplyContext(messageId, userOpenId), content, cancellationToken); }
+        finally { _requestLock.Release(); }
+    }
+
+    private async Task ExecuteCommandAsync(string command, string argument, ReplyContext context,
+        CancellationToken cancellationToken)
+    {
+        var bindings = getCommandBindings();
+        var userId = context.UserOpenId;
+        string response;
+        switch (command)
+        {
+            case "help":
+                response = "可用指令（发送命令即可执行）：\n" + string.Join("\n", bindings
+                    .Where(pair => !string.IsNullOrWhiteSpace(pair.Value) && pair.Key != "help")
+                    .Select(pair => $"{pair.Value} — {CommandLabels.GetValueOrDefault(pair.Key, pair.Key)}"));
+                break;
+            case "status":
+                response = $"机器人：{getRuntimeStatus()}\nCodex：{(codex.DefaultThreadId is null ? "未启动" : "已连接")}";
+                break;
+            case "sessions":
+            {
+                var sessions = await sessionStore.GetAsync(userId, cancellationToken);
+                response = sessions.Count == 0 ? "还没有会话，发送新建会话命令开始。" : "你的会话：\n" + string.Join("\n",
+                    sessions.Select((item, index) => $"{index + 1}. {(item.IsActive ? "▶ " : string.Empty)}{item.Name}"));
+                break;
+            }
+            case "switch-session":
+            {
+                if (!int.TryParse(argument, out var index)) { response = "请在切换命令后加列表编号，例如：" + bindings.GetValueOrDefault(command, "\\切换") + " 2"; break; }
+                var session = await sessionStore.SelectAsync(userId, index, cancellationToken);
+                if (session is null) { response = "没有这个编号。先查看会话列表，再输入切换命令和编号。"; break; }
+                await codex.ResumeThreadAsync(session.ThreadId, cancellationToken);
+                response = $"已切换到会话：{session.Name}";
+                break;
+            }
+            case "new-session":
+            {
+                var threadId = await codex.CreateThreadAsync(cancellationToken);
+                var name = string.IsNullOrWhiteSpace(argument) ? $"新会话 {DateTimeOffset.Now:MM-dd HH:mm}" : argument.Trim();
+                await codex.SetThreadNameAsync(threadId, name, cancellationToken);
+                var session = await sessionStore.AddAsync(userId, threadId, name, cancellationToken);
+                response = $"已创建并切换到会话：{session.Name}";
+                break;
+            }
+            case "current":
+            {
+                var session = await sessionStore.EnsureAsync(userId, codex.DefaultThreadId ??
+                    throw new InvalidOperationException("Codex 会话尚未启动。"), "默认会话", codex.CreateThreadAsync, cancellationToken);
+                response = $"当前会话：{session.Name}";
+                break;
+            }
+            case "rename":
+                if (string.IsNullOrWhiteSpace(argument)) { response = "请在标题命令后输入新名称。"; break; }
+                if (argument.Trim().Length > 64) { response = "会话名称不能超过 64 个字符。"; break; }
+                var active = await sessionStore.GetActiveAsync(userId, cancellationToken);
+                if (active is null) { response = "当前没有会话。"; break; }
+                await codex.SetThreadNameAsync(active.ThreadId, argument.Trim(), cancellationToken);
+                await sessionStore.RenameActiveAsync(userId, argument.Trim(), cancellationToken);
+                response = $"会话已命名为：{argument.Trim()}";
+                break;
+            case "workdir":
+                response = $"当前工作目录：{codex.WorkDirectory}";
+                break;
+            case "recent":
+            {
+                var page = conversationStore.GetPage(null, 12, userId, exactUserMatch: true);
+                var recent = page.Items.Where(item => item.Kind is "user" or "assistant").TakeLast(8).ToArray();
+                response = recent.Length == 0 ? "暂无对话记录。" : string.Join("\n", recent.Select(item =>
+                    $"{(item.Kind == "user" ? "你" : "Codex")}: {Truncate(item.Content, 100)}"));
+                break;
+            }
+            case "screenshot":
+                codex.SetActiveToolContext(context);
+                try
+                {
+                    await HandleMcpToolAsync(new McpToolRequest(McpToolKind.CaptureScreen, null), cancellationToken);
+                    response = "截图已发送。";
+                }
+                finally { codex.SetActiveToolContext(null); }
+                break;
+            case "retry":
+                if (!_lastRequests.TryGetValue(userId, out var previous))
+                    previous = conversationStore.GetLatestContent(userId, "user") ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(previous)) { response = "没有可重试的请求。"; break; }
+                await ProcessCodexRequestAsync(context, previous, cancellationToken);
+                await this.RecordConversationAsync(userId, "command", "retry", cancellationToken: cancellationToken);
+                return;
+            default:
+                response = "该动作尚未实现。";
+                break;
+        }
+        await SendTextReplyAsync(context, response, cancellationToken);
+        await this.RecordConversationAsync(userId, "command", $"{command}: {argument}".TrimEnd(), cancellationToken: cancellationToken);
+    }
+
+    private static readonly IReadOnlyDictionary<string, string> CommandLabels = new Dictionary<string, string>
+    {
+        ["status"] = "运行状态", ["sessions"] = "会话列表", ["switch-session"] = "切换会话",
+        ["new-session"] = "新建会话", ["recent"] = "最近记录", ["current"] = "当前会话",
+        ["rename"] = "重命名会话", ["workdir"] = "工作目录", ["screenshot"] = "发送截图",
+        ["retry"] = "重试上一条", ["stop"] = "停止任务"
+    };
+
+    private async Task ProcessCodexRequestAsync(ReplyContext context, string content, CancellationToken cancellationToken)
+    {
+        var userId = context.UserOpenId;
+        WriteLogBlock($"QQ 输入 ({userId})", content);
+        await this.RecordConversationAsync(userId, "user", content, cancellationToken: cancellationToken);
+        var session = await sessionStore.EnsureAsync(userId, codex.DefaultThreadId ??
+            throw new InvalidOperationException("Codex 会话尚未启动。"), "默认会话", codex.CreateThreadAsync, cancellationToken);
+        await sessionStore.TouchActiveAsync(userId, cancellationToken);
+        await codex.ResumeThreadAsync(session.ThreadId, cancellationToken);
+        codex.SetActiveToolContext(context);
+        _lastRequests[userId] = content;
+        using var requestCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _activeRequests[userId] = requestCts;
         try
         {
-            var context = new ReplyContext(messageId, userOpenId);
-            codex.SetActiveToolContext(context);
-            var turnReply = await codex.AskAsync(content, cancellationToken);
+            var turnReply = await codex.AskAsync(session.ThreadId, content, requestCts.Token);
             var reply = turnReply.Text;
             Console.WriteLine($"Codex 已返回回复（{reply.Length} 字符，{turnReply.Images.Count} 张图片）。");
             WriteLogBlock("Codex 推理摘要", string.IsNullOrWhiteSpace(turnReply.ReasoningSummary)
                 ? "（app-server 此轮未提供推理摘要）" : turnReply.ReasoningSummary);
             WriteLogBlock("Codex 完整输出", reply);
             if (!string.IsNullOrWhiteSpace(turnReply.ReasoningSummary))
-                await this.RecordConversationAsync(userOpenId, "reasoning", turnReply.ReasoningSummary, cancellationToken: cancellationToken);
-            await this.RecordConversationAsync(userOpenId, "assistant", reply, turnReply.Images.Count, cancellationToken);
+                await this.RecordConversationAsync(userId, "reasoning", turnReply.ReasoningSummary, cancellationToken: cancellationToken);
+            await this.RecordConversationAsync(userId, "assistant", reply, turnReply.Images.Count, cancellationToken);
             await SendTurnReplyAsync(context, reply, turnReply.Images, cancellationToken);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            await SendTextReplyAsync(context, "任务已停止。", cancellationToken);
         }
         finally
         {
             codex.SetActiveToolContext(null);
-            _requestLock.Release();
+            _activeRequests.TryRemove(userId, out _);
         }
     }
+
+    private static bool TryMatchCommand(string content, IReadOnlyDictionary<string, string> bindings,
+        out string action, out string argument)
+    {
+        var trimmed = content.Trim();
+        foreach (var pair in bindings.Where(pair => !string.IsNullOrWhiteSpace(pair.Value))
+                     .OrderByDescending(pair => pair.Value.Length))
+        {
+            var trigger = pair.Value.Trim();
+            if (string.Equals(trimmed, trigger, StringComparison.OrdinalIgnoreCase))
+            { action = pair.Key; argument = string.Empty; return true; }
+            if ((pair.Key is "switch-session" or "rename" or "new-session") &&
+                trimmed.StartsWith(trigger + " ", StringComparison.OrdinalIgnoreCase))
+            { action = pair.Key; argument = trimmed[(trigger.Length + 1)..].Trim(); return true; }
+        }
+        action = string.Empty; argument = string.Empty; return false;
+    }
+
+    private static string Truncate(string text, int length) => text.Length <= length ? text : text[..(length - 1)] + "…";
 
     private static void WriteLogBlock(string title, string content)
     {

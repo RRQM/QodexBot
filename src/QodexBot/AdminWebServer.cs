@@ -13,14 +13,16 @@ internal sealed class AdminWebServer : IAsyncDisposable
 {
     private readonly BotSettingsStore m_settingsStore;
     private readonly ConversationStore m_conversationStore;
+    private readonly QqQrLoginService m_qrLoginService;
     private readonly HttpService m_service = new();
     private string? m_pageContent;
     private readonly int m_port;
 
-    public AdminWebServer(BotSettingsStore settingsStore, ConversationStore conversationStore)
+    public AdminWebServer(BotSettingsStore settingsStore, ConversationStore conversationStore, QqQrLoginService qrLoginService)
     {
         this.m_settingsStore = settingsStore;
         this.m_conversationStore = conversationStore;
+        this.m_qrLoginService = qrLoginService;
         this.m_port = settingsStore.GetAdminPort();
     }
 
@@ -39,7 +41,8 @@ internal sealed class AdminWebServer : IAsyncDisposable
             .SetListenIPHosts(new IPHost($"127.0.0.1:{this.m_port}"))
             .ConfigureContainer(container => container.AddRpcStore(store =>
             {
-                store.RegisterServer(new AdminApiController(this.m_settingsStore, this.m_conversationStore, this.m_port));
+                store.RegisterServer(new AdminApiController(this.m_settingsStore, this.m_conversationStore,
+                    this.m_qrLoginService, this.m_port));
             }))
             .ConfigurePlugins(plugins =>
             {
