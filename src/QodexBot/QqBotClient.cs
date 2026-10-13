@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppServer codex,
     LocalToolIpcServer mcp, ConversationStore conversationStore, BotSessionStore sessionStore,
@@ -19,6 +20,8 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
     private readonly ConcurrentDictionary<string, PendingQuestion> _questions = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _lastRequests = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _activeRequests = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> _handledMessageIds = new(StringComparer.Ordinal);
+    private readonly ConcurrentQueue<string> _handledMessageOrder = new();
     private string? _accessToken;
     private DateTimeOffset _tokenExpiresAt;
 
@@ -126,8 +129,22 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
                     }
                     else if (eventName == "C2C_MESSAGE_CREATE")
                     {
+                        if (config.SubscribeC2cMessages)
+                        {
+                            var message = data.Clone();
+                            _ = HandleMessageAndLogAsync(message, connectionToken);
+                        }
+                    }
+                    else if (eventName is "GROUP_AT_MESSAGE_CREATE" or "GROUP_MESSAGE_CREATE")
+                    {
+                        if (!config.SubscribeGroupMessages)
+                        {
+                            Console.WriteLine("群聊消息接收已在管理页关闭，忽略该事件。");
+                            break;
+                        }
                         var message = data.Clone();
-                        _ = HandleMessageAndLogAsync(message, connectionToken);
+                        if (TryMarkGroupMessageHandled(message))
+                            _ = HandleMessageAndLogAsync(message, connectionToken, isGroup: true);
                     }
                     else if (!string.IsNullOrEmpty(eventName) && eventName != "RESUMED")
                     {
@@ -143,9 +160,9 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
         }
     }
 
-    private async Task HandleMessageAndLogAsync(JsonElement message, CancellationToken cancellationToken)
+    private async Task HandleMessageAndLogAsync(JsonElement message, CancellationToken cancellationToken, bool isGroup = false)
     {
-        try { await HandleMessageAsync(message, cancellationToken); }
+        try { await HandleMessageAsync(message, cancellationToken, isGroup); }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception ex) { Console.Error.WriteLine($"处理 QQ 消息失败：{ex.Message}"); }
     }
@@ -179,20 +196,30 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
         finally { sendLock.Release(); }
     }
 
-    private async Task HandleMessageAsync(JsonElement message, CancellationToken cancellationToken)
+    private async Task HandleMessageAsync(JsonElement message, CancellationToken cancellationToken, bool isGroup)
     {
         var messageId = GetString(message, "id");
         var content = GetString(message, "content") ?? string.Empty;
-        var userOpenId = message.TryGetProperty("author", out var author) ? GetString(author, "user_openid") : null;
-        if (string.IsNullOrWhiteSpace(messageId) || string.IsNullOrWhiteSpace(userOpenId))
+        var author = message.TryGetProperty("author", out var authorElement) ? authorElement : default;
+        var groupOpenId = isGroup ? GetString(message, "group_openid") : null;
+        var memberOpenId = isGroup ? GetString(author, "member_openid") : null;
+        var userOpenId = isGroup ? $"group:{groupOpenId}:{memberOpenId}" : GetString(author, "user_openid");
+        if (string.IsNullOrWhiteSpace(messageId) || string.IsNullOrWhiteSpace(userOpenId) ||
+            (isGroup && (string.IsNullOrWhiteSpace(groupOpenId) || string.IsNullOrWhiteSpace(memberOpenId))))
         {
-            Console.WriteLine("C2C 消息缺少消息 ID 或用户 OpenID，跳过回复。");
+            Console.WriteLine(isGroup ? "群聊消息缺少消息 ID、群 OpenID 或成员 OpenID，跳过处理。" : "C2C 消息缺少消息 ID 或用户 OpenID，跳过回复。");
             return;
         }
+        if (author.ValueKind == JsonValueKind.Object && author.TryGetProperty("bot", out var botElement) &&
+            botElement.ValueKind == JsonValueKind.True)
+            return;
+
+        if (isGroup)
+            content = Regex.Replace(content, "<@!?[^>]+>", string.Empty).Trim();
+        var context = new ReplyContext(messageId, userOpenId, groupOpenId);
 
         if (TryMatchCommand(content, getCommandBindings(), out var command, out var argument))
         {
-            var context = new ReplyContext(messageId, userOpenId);
             if (command == "stop")
             {
                 var stopped = false;
@@ -229,13 +256,30 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
 
         if (content.TrimStart().StartsWith('\\'))
         {
-            await SendTextReplyAsync(new ReplyContext(messageId, userOpenId), "未识别的指令。发送 \\ 查看可用指令。", cancellationToken);
+            await SendTextReplyAsync(context, "未识别的指令。发送 \\ 查看可用指令。", cancellationToken);
             return;
         }
 
         await _requestLock.WaitAsync(cancellationToken);
-        try { await ProcessCodexRequestAsync(new ReplyContext(messageId, userOpenId), content, cancellationToken); }
+        try { await ProcessCodexRequestAsync(context, content, cancellationToken); }
         finally { _requestLock.Release(); }
+    }
+
+    private bool TryMarkGroupMessageHandled(JsonElement message)
+    {
+        var messageId = GetString(message, "id");
+        var groupOpenId = GetString(message, "group_openid");
+        if (string.IsNullOrWhiteSpace(messageId) || string.IsNullOrWhiteSpace(groupOpenId)) return false;
+        var key = $"{groupOpenId}:{messageId}";
+        if (!_handledMessageIds.TryAdd(key, 0))
+        {
+            Console.WriteLine("跳过重复的群聊消息事件。");
+            return false;
+        }
+        _handledMessageOrder.Enqueue(key);
+        while (_handledMessageIds.Count > 4096 && _handledMessageOrder.TryDequeue(out var oldest))
+            _handledMessageIds.TryRemove(oldest, out _);
+        return true;
     }
 
     private async Task ExecuteCommandAsync(string command, string argument, ReplyContext context,
@@ -464,7 +508,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
         CancellationToken cancellationToken)
     {
         var token = await GetAccessTokenAsync(cancellationToken);
-        var endpoint = new Uri(_apiBase, $"v2/users/{Uri.EscapeDataString(context.UserOpenId)}/messages");
+        var endpoint = GetMessagesEndpoint(context);
 
         var uploadedImages = new List<JsonElement>();
         if (images.Count > 4)
@@ -477,7 +521,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
             JsonElement fileInfo;
             try
             {
-                fileInfo = await UploadC2cImageAsync(context.UserOpenId, image, token, cancellationToken);
+                fileInfo = await UploadImageAsync(context, image, token, cancellationToken);
             }
             catch (Exception directUploadError) when (directUploadError is not OperationCanceledException)
             {
@@ -590,7 +634,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
             {
                 await SendImageReplyAsync(context, image, cancellationToken);
                 await this.RecordConversationAsync(context.UserOpenId, "image", "通过 MCP 工具发送了图片", 1, cancellationToken);
-                return "图片已发送到当前 QQ 单聊。";
+                return "图片已发送到当前 QQ 对话。";
             }
             catch
             {
@@ -645,8 +689,8 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
     {
         if (context.Sequence > 5) throw new InvalidOperationException("此 QQ 消息的回复次数已用完。");
         var token = await GetAccessTokenAsync(cancellationToken);
-        var fileInfo = await UploadC2cImageAsync(context.UserOpenId, image, token, cancellationToken);
-        var endpoint = new Uri(_apiBase, $"v2/users/{Uri.EscapeDataString(context.UserOpenId)}/messages");
+        var fileInfo = await UploadImageAsync(context, image, token, cancellationToken);
+        var endpoint = GetMessagesEndpoint(context);
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
         request.Headers.Authorization = new AuthenticationHeaderValue("QQBot", token);
         request.Content = new StringContent(JsonSerializer.Serialize(
@@ -661,7 +705,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
     {
         if (context.Sequence > 5) throw new InvalidOperationException("此 QQ 消息的回复次数已用完。");
         var token = await GetAccessTokenAsync(cancellationToken);
-        var endpoint = new Uri(_apiBase, $"v2/users/{Uri.EscapeDataString(context.UserOpenId)}/messages");
+        var endpoint = GetMessagesEndpoint(context);
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
         request.Headers.Authorization = new AuthenticationHeaderValue("QQBot", token);
         request.Content = new StringContent(JsonSerializer.Serialize(
@@ -673,10 +717,12 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
         if (!response.IsSuccessStatusCode) throw new HttpRequestException($"QQ 提问发送失败 ({(int)response.StatusCode})：{body}");
     }
 
-    private async Task<JsonElement> UploadC2cImageAsync(string userOpenId, CodexImage image, string token,
+    private async Task<JsonElement> UploadImageAsync(ReplyContext context, CodexImage image, string token,
         CancellationToken cancellationToken)
     {
-        var endpoint = new Uri(_apiBase, $"v2/users/{Uri.EscapeDataString(userOpenId)}/files");
+        var endpoint = context.GroupOpenId is null
+            ? new Uri(_apiBase, $"v2/users/{Uri.EscapeDataString(context.ChatOpenId)}/files")
+            : new Uri(_apiBase, $"v2/groups/{Uri.EscapeDataString(context.ChatOpenId)}/files");
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
         request.Headers.Authorization = new AuthenticationHeaderValue("QQBot", token);
         request.Content = new StringContent(JsonSerializer.Serialize(
@@ -710,6 +756,10 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
             throw new InvalidOperationException("QQ 富媒体上传响应中没有 file_info。");
         return fileInfo.Clone();
     }
+
+    private Uri GetMessagesEndpoint(ReplyContext context) => context.GroupOpenId is null
+        ? new Uri(_apiBase, $"v2/users/{Uri.EscapeDataString(context.ChatOpenId)}/messages")
+        : new Uri(_apiBase, $"v2/groups/{Uri.EscapeDataString(context.ChatOpenId)}/messages");
 
     private static string AppendReplyNote(string reply, string note) =>
         string.IsNullOrWhiteSpace(reply) ? note : $"{reply.TrimEnd()}\n{note}";
@@ -757,5 +807,5 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
     }
 
     private static string? GetString(JsonElement element, string property) =>
-        element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 }

@@ -3,12 +3,14 @@ using System.Collections.Concurrent;
 internal sealed record CodexImage(byte[] Bytes, string ContentType, string Extension);
 internal sealed record CodexTurnReply(string Text, IReadOnlyList<CodexImage> Images, string ReasoningSummary = "");
 
-internal sealed class ReplyContext(string messageId, string userOpenId)
+internal sealed class ReplyContext(string messageId, string userOpenId, string? groupOpenId = null)
 {
     private int _sequence = 1;
     private string _messageId = messageId;
     public string MessageId => Volatile.Read(ref _messageId);
     public string UserOpenId { get; } = userOpenId;
+    public string? GroupOpenId { get; } = groupOpenId;
+    public string ChatOpenId => GroupOpenId ?? UserOpenId;
     public int Sequence => _sequence;
     public ConcurrentDictionary<string, byte> SentImageHashes { get; } = new(StringComparer.Ordinal);
     public int NextSequence() => Interlocked.Increment(ref _sequence) - 1;

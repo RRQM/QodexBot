@@ -4,4 +4,6 @@ internal sealed record BotConfig(
     string AppId,
     string AppSecret,
     bool Sandbox,
-    ulong Intents);
+    ulong Intents,
+    bool SubscribeC2cMessages,
+    bool SubscribeGroupMessages);

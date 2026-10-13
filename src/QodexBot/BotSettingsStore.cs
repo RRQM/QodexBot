@@ -58,7 +58,8 @@ internal sealed class BotSettingsStore(string filePath)
                     {
                         settings.Bots.Add(new BotProfileDocument { Id = "default", Name = "QQ 机器人 1", AppId = settings.AppId,
                             AppSecret = settings.AppSecret, Sandbox = settings.Sandbox,
-                            SubscribeC2cMessages = settings.SubscribeC2cMessages, CommandBindings = settings.CommandBindings });
+                            SubscribeC2cMessages = settings.SubscribeC2cMessages, SubscribeGroupMessages = settings.SubscribeGroupMessages,
+                            CommandBindings = settings.CommandBindings });
                         settings.AppId = string.Empty;
                         settings.AppSecret = string.Empty;
                     }
@@ -90,7 +91,7 @@ internal sealed class BotSettingsStore(string filePath)
 
         var bot = settings.Bots.FirstOrDefault();
         if (bot is null)
-            return new BotSettingsView("", "QQ 机器人", "", false, true, settings.AdminPort, false, false,
+            return new BotSettingsView("", "QQ 机器人", "", false, true, true, settings.AdminPort, false, false,
                 this.m_configurationError ?? "", NormalizeCommandBindings(null), "等待扫码绑定");
         return ToView(bot, settings.AdminPort);
     }
@@ -114,7 +115,8 @@ internal sealed class BotSettingsStore(string filePath)
             {
                 Validate(bot);
                 configs.Add(new BotConfig(bot.Id, bot.Name, bot.AppId, bot.AppSecret, bot.Sandbox,
-                    bot.SubscribeC2cMessages ? 1UL << 25 : 0));
+                    bot.SubscribeC2cMessages || bot.SubscribeGroupMessages ? 1UL << 25 : 0,
+                    bot.SubscribeC2cMessages, bot.SubscribeGroupMessages));
             }
             catch (ArgumentException ex)
             {
@@ -161,6 +163,7 @@ internal sealed class BotSettingsStore(string filePath)
                 AppSecret = string.IsNullOrWhiteSpace(input.AppSecret) ? bot.AppSecret : input.AppSecret,
                 Sandbox = input.Sandbox,
                 SubscribeC2cMessages = input.SubscribeC2cMessages,
+                SubscribeGroupMessages = input.SubscribeGroupMessages,
                 CommandBindings = NormalizeCommandBindings(input.CommandBindings ?? bot.CommandBindings),
             };
             Validate(updatedBot, credentialsRequired: false);
@@ -322,7 +325,7 @@ internal sealed class BotSettingsStore(string filePath)
     }
 
     private BotSettingsView ToView(BotProfileDocument bot, int adminPort) => new(bot.Id, bot.Name, bot.AppId, bot.Sandbox,
-        bot.SubscribeC2cMessages, adminPort, !string.IsNullOrEmpty(bot.AppSecret), !string.IsNullOrEmpty(bot.AppId) && !string.IsNullOrEmpty(bot.AppSecret),
+        bot.SubscribeC2cMessages, bot.SubscribeGroupMessages, adminPort, !string.IsNullOrEmpty(bot.AppSecret), !string.IsNullOrEmpty(bot.AppId) && !string.IsNullOrEmpty(bot.AppSecret),
         string.Empty, NormalizeCommandBindings(bot.CommandBindings), GetBotRuntimeStatus(bot.Id));
 
     private static Dictionary<string, string> NormalizeCommandBindings(Dictionary<string, string>? supplied)
@@ -344,6 +347,7 @@ internal sealed class BotSettingsStore(string filePath)
         public string AppSecret { get; set; } = string.Empty;
         public bool Sandbox { get; set; }
         public bool SubscribeC2cMessages { get; set; } = true;
+        public bool SubscribeGroupMessages { get; set; } = true;
         public int AdminPort { get; set; } = 17890;
         public Dictionary<string, string> CommandBindings { get; set; } = DefaultCommandBindings
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
@@ -358,6 +362,7 @@ internal sealed class BotSettingsStore(string filePath)
         public string AppSecret { get; init; } = string.Empty;
         public bool Sandbox { get; init; }
         public bool SubscribeC2cMessages { get; init; } = true;
+        public bool SubscribeGroupMessages { get; init; } = true;
         public Dictionary<string, string> CommandBindings { get; init; } = DefaultCommandBindings.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
     }
 }
@@ -367,6 +372,7 @@ internal sealed record BotSettingsInput(
     string? AppSecret,
     bool Sandbox,
     bool SubscribeC2cMessages,
+    bool SubscribeGroupMessages,
     int AdminPort,
     Dictionary<string, string>? CommandBindings = null,
     string? BotId = null,
@@ -378,6 +384,7 @@ internal sealed record BotSettingsView(
     string AppId,
     bool Sandbox,
     bool SubscribeC2cMessages,
+    bool SubscribeGroupMessages,
     int AdminPort,
     bool SecretConfigured,
     bool IsConfigured,

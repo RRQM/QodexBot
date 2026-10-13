@@ -85,6 +85,7 @@
           <div class="field"><label for="environment">运行环境</label><select id="environment" name="sandbox"><option value="false">正式环境</option><option value="true">沙箱环境</option></select></div>
           <div class="field"><label for="adminPort">管理页面端口</label><input id="adminPort" type="number" min="1" max="65535" required><p class="hint">端口保存在本地配置文件中；修改后需重启程序生效。</p></div>
           <label class="toggle"><input id="subscribeC2cMessages" type="checkbox"><span><strong>接收 C2C 私聊消息</strong><br><span class="hint">关闭后机器人会连接网关，但不订阅私聊消息事件。</span></span></label>
+          <label class="toggle"><input id="subscribeGroupMessages" type="checkbox"><span><strong>接收群聊消息</strong><br><span class="hint">处理 @机器人的群消息；如需接收群内普通消息，还要在 QQ 开放平台开启全量群消息事件。</span></span></label>
           <div class="command-section">
             <div class="command-heading"><div><h3>QQ 指令</h3><p>为动作设置触发命令，留空可禁用。参数示例：\切换 2、\标题 新名称。</p></div><span class="command-count">12 个动作</span></div>
             <div id="command-list" class="command-list"></div>
@@ -101,7 +102,7 @@
       </aside>
     </div>
     <section class="card history-card">
-      <div class="history-head"><div><span class="section-kicker">ACTIVITY</span><h2>会话记录</h2><p class="hint">消息、回复、提问和图片发送事件保存在本机，重启后仍可查看。</p></div><div class="history-tools"><input id="history-filter" type="text" placeholder="按 QQ 用户 OpenID 筛选"><button id="history-refresh" class="button secondary" type="button">刷新</button></div></div>
+      <div class="history-head"><div><span class="section-kicker">ACTIVITY</span><h2>会话记录</h2><p class="hint">消息、回复、提问和图片发送事件保存在本机，重启后仍可查看。</p></div><div class="history-tools"><input id="history-filter" type="text" placeholder="按用户或群成员 OpenID 筛选"><button id="history-refresh" class="button secondary" type="button">刷新</button></div></div>
       <div id="history-list" class="history-list"><div class="history-empty">正在读取会话记录…</div></div>
       <div class="history-footer"><button id="history-more" class="button secondary" type="button" hidden>加载更早记录</button><span id="history-note" class="history-note"></span></div>
     </section>
@@ -193,6 +194,7 @@
       document.getElementById('environment').value = String(Boolean(s.sandbox));
       document.getElementById('adminPort').value = s.adminPort || 17890;
       document.getElementById('subscribeC2cMessages').checked = s.subscribeC2cMessages !== false;
+      document.getElementById('subscribeGroupMessages').checked = s.subscribeGroupMessages !== false;
       for (const [key] of commandDefinitions) document.getElementById(`command-${key}`).value = s.commandBindings?.[key] ?? '';
       document.getElementById('binding-status').textContent = s.isConfigured ? `QQ 机器人已绑定，运行状态：${s.runtimeStatus || '等待启动'}` : '尚未绑定 QQ 机器人，请使用手机 QQ 扫码。';
     }
@@ -272,6 +274,7 @@
         appSecret: '',
         sandbox: document.getElementById('environment').value === 'true',
         subscribeC2cMessages: document.getElementById('subscribeC2cMessages').checked,
+        subscribeGroupMessages: document.getElementById('subscribeGroupMessages').checked,
         adminPort: Number(document.getElementById('adminPort').value),
         commandBindings: Object.fromEntries(commandDefinitions.map(([key]) => [key, document.getElementById(`command-${key}`).value.trim()])),
       };
