@@ -22,6 +22,7 @@ jobs:
         shell: pwsh
         env:
           BEFORE_SHA: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           function Get-ProjectVersion([xml]$ProjectFile) {
             $node = $ProjectFile.SelectSingleNode('/Project/PropertyGroup/Version')
@@ -47,12 +48,19 @@ jobs:
             }
           }
 
-          $changed = $previousVersion -ne $currentVersion
+          $versionChanged = $previousVersion -ne $currentVersion
+          $releaseTag = "v$currentVersion"
+          gh release view $releaseTag --repo $env:GITHUB_REPOSITORY --json tagName 2>$null | Out-Null
+          $releaseExists = $LASTEXITCODE -eq 0
+          $shouldPublish = $versionChanged -or -not $releaseExists
+
           "version=$currentVersion" >> $env:GITHUB_OUTPUT
-          "changed=$($changed.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "changed=$($shouldPublish.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           Write-Host "Previous version: $(if ($previousVersion) { $previousVersion } else { '(none)' })"
           Write-Host "Current version: $currentVersion"
-          Write-Host "Version changed: $changed"
+          Write-Host "Version changed: $versionChanged"
+          Write-Host "Release exists: $releaseExists"
+          Write-Host "Publish release: $shouldPublish"
 
       - name: Set up .NET 10
         if: steps.version.outputs.changed == 'true'
