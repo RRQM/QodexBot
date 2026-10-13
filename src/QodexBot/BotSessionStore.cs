@@ -68,6 +68,24 @@ internal sealed class BotSessionStore(string filePath)
         finally { this.m_lock.Release(); }
     }
 
+    public async Task<BotSession> ReplaceActiveAsync(string owner, string oldThreadId, string newThreadId,
+        CancellationToken cancellationToken)
+    {
+        await this.m_lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var oldSession = this.m_sessions.FirstOrDefault(item => item.Owner == owner && item.ThreadId == oldThreadId);
+            var name = oldSession?.Name ?? "默认会话";
+            this.m_sessions.RemoveAll(item => item.Owner == owner && item.ThreadId == oldThreadId);
+            this.SetActiveCore(owner, null);
+            var replacement = new BotSession(owner, newThreadId, name, DateTimeOffset.UtcNow, true);
+            this.m_sessions.Add(replacement);
+            await this.SaveCoreAsync(cancellationToken).ConfigureAwait(false);
+            return replacement;
+        }
+        finally { this.m_lock.Release(); }
+    }
+
     public async Task<BotSession?> SelectAsync(string owner, int index, CancellationToken cancellationToken)
     {
         await this.m_lock.WaitAsync(cancellationToken).ConfigureAwait(false);

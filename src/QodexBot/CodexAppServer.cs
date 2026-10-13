@@ -10,6 +10,7 @@ internal sealed class CodexAppServer : IAsyncDisposable
         "npm", "node_modules", "@openai", "codex", "bin", "codex.js");
     private readonly string _workDirectory = Path.Combine(Path.GetTempPath(), "QodexBot");
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> _pending = new();
+    private readonly ConcurrentDictionary<string, byte> _liveThreads = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly SemaphoreSlim _startLock = new(1, 1);
     private readonly SemaphoreSlim _turnLock = new(1, 1);
@@ -98,6 +99,7 @@ internal sealed class CodexAppServer : IAsyncDisposable
             var threadResult = await SendRequestAsync("thread/start", BuildThreadStartParams(), cancellationToken);
             _threadId = threadResult.GetProperty("thread").GetProperty("id").GetString()
                 ?? throw new InvalidOperationException("Codex app-server 没有返回 thread id。");
+            _liveThreads.TryAdd(_threadId, 0);
             Console.WriteLine($"常驻 Codex CLI 已启动，会话：{_threadId}");
             Console.WriteLine("已启用 Codex MCP 工具：qq_capture_screen、qq_send_image、qq_ask_user、qq_input。");
         }
@@ -113,20 +115,18 @@ internal sealed class CodexAppServer : IAsyncDisposable
     {
         await StartAsync(cancellationToken);
         var result = await SendRequestAsync("thread/start", BuildThreadStartParams(), cancellationToken);
-        return result.GetProperty("thread").GetProperty("id").GetString()
+        var threadId = result.GetProperty("thread").GetProperty("id").GetString()
             ?? throw new InvalidOperationException("Codex app-server 没有返回新会话 ID。");
+        _liveThreads.TryAdd(threadId, 0);
+        return threadId;
     }
 
     public async Task ResumeThreadAsync(string threadId, CancellationToken cancellationToken)
     {
         await StartAsync(cancellationToken);
+        // 新 thread 在第一轮 turn 写出 rollout 前无法 resume；它已由当前 app-server 持有。
+        if (_liveThreads.ContainsKey(threadId)) return;
         await SendRequestAsync("thread/resume", new JsonObject { ["threadId"] = threadId }, cancellationToken);
-    }
-
-    public async Task SetThreadNameAsync(string threadId, string name, CancellationToken cancellationToken)
-    {
-        await StartAsync(cancellationToken);
-        await SendRequestAsync("thread/name/set", new JsonObject { ["threadId"] = threadId, ["name"] = name }, cancellationToken);
     }
 
     public async Task InterruptTurnAsync(string threadId, CancellationToken cancellationToken)
@@ -430,6 +430,7 @@ internal sealed class CodexAppServer : IAsyncDisposable
             _process = null;
             _readerTask = null;
             _threadId = null;
+            _liveThreads.Clear();
         }
     }
 }

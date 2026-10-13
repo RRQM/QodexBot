@@ -266,7 +266,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
                 if (!int.TryParse(argument, out var index)) { response = "请在切换命令后加列表编号，例如：" + bindings.GetValueOrDefault(command, "\\切换") + " 2"; break; }
                 var session = await sessionStore.SelectAsync(userId, index, cancellationToken);
                 if (session is null) { response = "没有这个编号。先查看会话列表，再输入切换命令和编号。"; break; }
-                await codex.ResumeThreadAsync(session.ThreadId, cancellationToken);
+                session = await this.ResumeOrRecreateSessionAsync(userId, session, cancellationToken);
                 response = $"已切换到会话：{session.Name}";
                 break;
             }
@@ -274,7 +274,6 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
             {
                 var threadId = await codex.CreateThreadAsync(cancellationToken);
                 var name = string.IsNullOrWhiteSpace(argument) ? $"新会话 {DateTimeOffset.Now:MM-dd HH:mm}" : argument.Trim();
-                await codex.SetThreadNameAsync(threadId, name, cancellationToken);
                 var session = await sessionStore.AddAsync(userId, threadId, name, cancellationToken);
                 response = $"已创建并切换到会话：{session.Name}";
                 break;
@@ -291,7 +290,6 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
                 if (argument.Trim().Length > 64) { response = "会话名称不能超过 64 个字符。"; break; }
                 var active = await sessionStore.GetActiveAsync(userId, cancellationToken);
                 if (active is null) { response = "当前没有会话。"; break; }
-                await codex.SetThreadNameAsync(active.ThreadId, argument.Trim(), cancellationToken);
                 await sessionStore.RenameActiveAsync(userId, argument.Trim(), cancellationToken);
                 response = $"会话已命名为：{argument.Trim()}";
                 break;
@@ -345,8 +343,8 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
         await this.RecordConversationAsync(userId, "user", content, cancellationToken: cancellationToken);
         var session = await sessionStore.EnsureAsync(userId, codex.DefaultThreadId ??
             throw new InvalidOperationException("Codex 会话尚未启动。"), "默认会话", codex.CreateThreadAsync, cancellationToken);
+        session = await this.ResumeOrRecreateSessionAsync(userId, session, cancellationToken);
         await sessionStore.TouchActiveAsync(userId, cancellationToken);
-        await codex.ResumeThreadAsync(session.ThreadId, cancellationToken);
         codex.SetActiveToolContext(context);
         _lastRequests[userId] = content;
         using var requestCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -372,6 +370,23 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
         {
             codex.SetActiveToolContext(null);
             _activeRequests.TryRemove(userId, out _);
+        }
+    }
+
+    private async Task<BotSession> ResumeOrRecreateSessionAsync(string userId, BotSession session,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await codex.ResumeThreadAsync(session.ThreadId, cancellationToken);
+            return session;
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("no rollout found for thread id", StringComparison.OrdinalIgnoreCase))
+        {
+            var replacementId = await codex.CreateThreadAsync(cancellationToken);
+            var replacement = await sessionStore.ReplaceActiveAsync(userId, session.ThreadId, replacementId, cancellationToken);
+            Console.Error.WriteLine($"Codex 会话 {session.ThreadId} 没有可恢复的 rollout，已创建替代会话 {replacementId}。");
+            return replacement;
         }
     }
 
