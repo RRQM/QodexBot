@@ -538,7 +538,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
             using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
             request.Headers.Authorization = new AuthenticationHeaderValue("QQBot", token);
             request.Content = new StringContent(JsonSerializer.Serialize(
-                new QqMessagePayload(part, 0, context.MessageId, context.NextSequence()),
+                new QqMessagePayload(null, 2, context.MessageId, context.NextSequence(), Markdown: new QqMarkdownPayload(part)),
                 AppJsonContext.Default.QqMessagePayload), Encoding.UTF8, "application/json");
             using var response = await http.SendAsync(request, cancellationToken);
             var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -564,7 +564,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
                 return;
             }
         }
-        Console.WriteLine($"已将 Codex 的回复发送回 QQ（{parts.Count} 条文本，{uploadedImages.Count} 张图片）。");
+        Console.WriteLine($"已将 Codex 的 Markdown 回复发送回 QQ（{parts.Count} 条消息，{uploadedImages.Count} 张图片）。");
     }
 
     private async Task<string> HandleMcpToolAsync(McpToolRequest request, CancellationToken cancellationToken)
@@ -652,7 +652,7 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
                 throw new InvalidOperationException("该用户已有一个待回答的问题。");
             try
             {
-                await SendTextReplyAsync(context, "Codex 需要你的补充：\n" + question, cancellationToken);
+                await SendTextReplyAsync(context, "Codex 需要你的补充：\n" + question, cancellationToken, markdown: true);
                 await this.RecordConversationAsync(context.UserOpenId, "question", question, cancellationToken: cancellationToken);
                 return await pending.Completion.Task.WaitAsync(TimeSpan.FromMinutes(5), cancellationToken);
             }
@@ -701,16 +701,20 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
         if (!response.IsSuccessStatusCode) throw new HttpRequestException($"QQ 图片消息发送失败 ({(int)response.StatusCode})：{body}");
     }
 
-    private async Task SendTextReplyAsync(ReplyContext context, string text, CancellationToken cancellationToken)
+    private async Task SendTextReplyAsync(ReplyContext context, string text, CancellationToken cancellationToken,
+        bool markdown = false)
     {
         if (context.Sequence > 5) throw new InvalidOperationException("此 QQ 消息的回复次数已用完。");
         var token = await GetAccessTokenAsync(cancellationToken);
         var endpoint = GetMessagesEndpoint(context);
+        var content = markdown ? SplitReply(text, 1, 1000)[0] : text.Length > 1000 ? text[..1000] : text;
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
         request.Headers.Authorization = new AuthenticationHeaderValue("QQBot", token);
         request.Content = new StringContent(JsonSerializer.Serialize(
-            new QqMessagePayload(text.Length > 1000 ? text[..1000] : text, 0,
-                context.MessageId, context.NextSequence()), AppJsonContext.Default.QqMessagePayload),
+            markdown
+                ? new QqMessagePayload(null, 2, context.MessageId, context.NextSequence(), Markdown: new QqMarkdownPayload(content))
+                : new QqMessagePayload(content, 0, context.MessageId, context.NextSequence()),
+            AppJsonContext.Default.QqMessagePayload),
             Encoding.UTF8, "application/json");
         using var response = await http.SendAsync(request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -772,7 +776,18 @@ internal sealed class QqBotClient(HttpClient http, BotConfig config, CodexAppSer
         var parts = new List<string>();
         for (var start = 0; start < reply.Length && parts.Count < maxParts;)
         {
-            var length = Math.Min(maxCharsPerPart, reply.Length - start);
+            var end = Math.Min(start + maxCharsPerPart, reply.Length);
+            if (end < reply.Length)
+            {
+                var preferredBreak = reply.LastIndexOf('\n', end - 1, end - start);
+                if (preferredBreak >= start + maxCharsPerPart / 2) end = preferredBreak + 1;
+                else
+                {
+                    preferredBreak = reply.LastIndexOf(' ', end - 1, end - start);
+                    if (preferredBreak >= start + maxCharsPerPart / 2) end = preferredBreak + 1;
+                }
+            }
+            var length = end - start;
             if (start + length < reply.Length && char.IsHighSurrogate(reply[start + length - 1])) length--;
             parts.Add(reply.Substring(start, length));
             start += length;

@@ -27,12 +27,16 @@ internal sealed record QqGatewayHeartbeatPayload(
     [property: JsonPropertyName("d")] long? D);
 
 internal sealed record QqMessagePayload(
-    [property: JsonPropertyName("content")] string Content,
+    [property: JsonPropertyName("content"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Content,
     [property: JsonPropertyName("msg_type")] int MessageType,
     [property: JsonPropertyName("msg_id")] string MessageId,
     [property: JsonPropertyName("msg_seq")] int MessageSequence,
     [property: JsonPropertyName("media"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        QqMediaPayload? Media = null);
+        QqMediaPayload? Media = null,
+    [property: JsonPropertyName("markdown"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        QqMarkdownPayload? Markdown = null);
+
+internal sealed record QqMarkdownPayload([property: JsonPropertyName("content")] string Content);
 
 internal sealed record QqMediaPayload([property: JsonPropertyName("file_info")] JsonElement FileInfo);
 

@@ -61,8 +61,17 @@
     .history-content{font-size:12px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;color:#34435a}
     .history-images{color:#8a5a00;font-size:10px;margin-top:6px}.history-empty{padding:38px 10px;text-align:center;color:#929cac;font-size:12px}
     .history-footer{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:15px}.history-note{font-size:10px;color:#8994a6}
-    @media(max-width:980px){.layout{grid-template-columns:minmax(0,1fr) 275px;gap:15px}.command-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
-    @media(max-width:760px){.shell{width:min(100% - 28px,620px);margin:25px auto 42px}.top{align-items:flex-start;gap:12px;margin-bottom:19px}.mark{width:43px;height:43px;border-radius:14px}.local-tag{font-size:0;padding:10px}.local-dot{width:8px;height:8px}.layout{grid-template-columns:1fr}.side{position:static;grid-row:1}.form-card,.history-card{padding:21px 19px}.section-head{margin-bottom:18px}.row{grid-template-columns:1fr;gap:0}.command-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.command-name{min-height:39px}.history-head{align-items:stretch;flex-direction:column}.history-tools input{width:auto;flex:1}.history-tools{width:100%}}
+    .main-nav{display:flex;gap:6px;margin:0 0 18px;padding:6px;width:max-content;max-width:100%;border:1px solid #e2e8f1;border-radius:13px;background:#ffffffb8;box-shadow:0 4px 14px #25395c08}
+    .nav-button{height:38px;padding:0 16px;border:0;border-radius:9px;background:transparent;color:#64738b;font:inherit;font-size:12px;font-weight:700;cursor:pointer;transition:background .16s,color .16s,box-shadow .16s}
+    .nav-button:hover{background:#f0f4fb;color:#2b3b56}.nav-button[aria-selected=true]{background:#fff;color:#315de8;box-shadow:0 2px 8px #25395c12}
+    .overview-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:stretch}
+    .welcome-card{padding:28px;display:flex;flex-direction:column;justify-content:center;min-height:245px;background:linear-gradient(140deg,#fff 10%,#f5f8ff 100%)}
+    .welcome-card h2{margin:0;color:var(--ink);font-size:20px;letter-spacing:-.4px}.welcome-card p{max-width:440px;margin:10px 0 20px;color:var(--muted);font-size:12px;line-height:1.7}
+    .welcome-actions{display:flex;flex-wrap:wrap;gap:9px}.side{position:static}
+    .page[hidden]{display:none}.settings-wrap{max-width:850px}.settings-wrap .form-card{padding:26px 28px}
+    .page-intro{margin:0 0 15px}.page-intro h2{margin:0;color:var(--ink);font-size:17px}.page-intro p{margin:5px 0 0;color:var(--muted);font-size:12px;line-height:1.6}
+    @media(max-width:980px){.command-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:760px){.shell{width:min(100% - 28px,620px);margin:25px auto 42px}.top{align-items:flex-start;gap:12px;margin-bottom:19px}.mark{width:43px;height:43px;border-radius:14px}.local-tag{font-size:0;padding:10px}.local-dot{width:8px;height:8px}.overview-grid{grid-template-columns:1fr;gap:13px}.welcome-card{min-height:0;padding:22px}.side{position:static}.form-card,.history-card{padding:21px 19px}.settings-wrap .form-card{padding:21px 19px}.section-head{margin-bottom:18px}.row{grid-template-columns:1fr;gap:0}.command-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.command-name{min-height:39px}.history-head{align-items:stretch;flex-direction:column}.history-tools input{width:auto;flex:1}.history-tools{width:100%}.main-nav{width:100%;justify-content:stretch}.nav-button{flex:1;padding:0 9px}}
     @media(max-width:420px){h1{font-size:21px}.subtitle{font-size:11px}.command-list{grid-template-columns:1fr}.command-name{min-height:0}.history-tools{gap:7px}.history-tools .button{padding:0 12px}.actions{align-items:flex-start;flex-direction:column}.actions .button{width:100%}}
   </style>
 </head>
@@ -73,7 +82,31 @@
       <div class="brand-copy"><span class="eyebrow">QQ BOT · LOCAL CONTROL</span><h1>QodexBot 管理</h1><p class="subtitle">配置机器人、管理指令并查看运行记录</p></div>
       <div class="local-tag"><span class="local-dot"></span>仅本机访问</div>
     </header>
-    <div class="layout">
+    <nav class="main-nav" role="tablist" aria-label="管理页面">
+      <button class="nav-button" id="tab-overview" type="button" role="tab" aria-controls="page-overview" aria-selected="true" data-page="overview">总览</button>
+      <button class="nav-button" id="tab-settings" type="button" role="tab" aria-controls="page-settings" aria-selected="false" data-page="settings">机器人设置</button>
+      <button class="nav-button" id="tab-history" type="button" role="tab" aria-controls="page-history" aria-selected="false" data-page="history">会话记录</button>
+    </nav>
+    <section class="page" id="page-overview" role="tabpanel" aria-labelledby="tab-overview">
+      <div class="overview-grid">
+        <aside class="card side">
+          <div class="status-head"><div class="status-title"><span class="status-icon" aria-hidden="true">●</span><h2>运行状态</h2></div><span id="badge" class="badge">读取中</span></div>
+          <p id="runtime-status" class="status-text">正在读取机器人状态…</p>
+          <div class="divider"></div>
+          <div class="meta-label">配置文件</div><div id="config-file" class="filepath">—</div>
+          <p class="footnote">状态每 4 秒自动刷新。配置保存在当前 Windows 用户的本机应用数据目录中。</p>
+        </aside>
+        <div class="card welcome-card">
+          <span class="section-kicker">CONTROL CENTER</span>
+          <h2>管理你的 QQ 机器人</h2>
+          <p>在机器人设置中绑定 QQ、调整消息接收方式和指令；会话记录可以按用户筛选并回看历史消息。</p>
+          <div class="welcome-actions"><button class="button" type="button" data-go="settings">配置机器人</button><button class="button secondary" type="button" data-go="history">查看会话记录</button></div>
+        </div>
+      </div>
+    </section>
+    <section class="page" id="page-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+      <div class="settings-wrap">
+        <div class="page-intro"><h2>机器人设置</h2><p>管理机器人账号、QQ 绑定、消息订阅与聊天指令。</p></div>
       <section class="card form-card">
         <div class="section-head"><div><span class="section-kicker">CONFIGURATION</span><h2 class="section-title">机器人接入</h2><p class="section-copy">设置 QQ 开放平台凭据与消息接收方式。</p></div><span class="section-number">01</span></div>
         <form id="settings-form">
@@ -93,18 +126,14 @@
           <div class="actions"><button id="save" class="button" type="submit">保存并应用</button><span id="message" class="message" role="status"></span></div>
         </form>
       </section>
-      <aside class="card side">
-        <div class="status-head"><div class="status-title"><span class="status-icon" aria-hidden="true">●</span><h2>运行状态</h2></div><span id="badge" class="badge">读取中</span></div>
-        <p id="runtime-status" class="status-text">正在读取机器人状态…</p>
-        <div class="divider"></div>
-        <div class="meta-label">配置文件</div><div id="config-file" class="filepath">—</div>
-        <p class="footnote">保存后设置会写入 JSON，并自动重连以应用新配置。App Secret 以明文保存在当前 Windows 用户的本地应用数据目录中。</p>
-      </aside>
-    </div>
+      </div>
+    </section>
+    <section class="page" id="page-history" role="tabpanel" aria-labelledby="tab-history" hidden>
     <section class="card history-card">
       <div class="history-head"><div><span class="section-kicker">ACTIVITY</span><h2>会话记录</h2><p class="hint">消息、回复、提问和图片发送事件保存在本机，重启后仍可查看。</p></div><div class="history-tools"><input id="history-filter" type="text" placeholder="按用户或群成员 OpenID 筛选"><button id="history-refresh" class="button secondary" type="button">刷新</button></div></div>
       <div id="history-list" class="history-list"><div class="history-empty">正在读取会话记录…</div></div>
       <div class="history-footer"><button id="history-more" class="button secondary" type="button" hidden>加载更早记录</button><span id="history-note" class="history-note"></span></div>
+    </section>
     </section>
   </main>
   <script>
@@ -122,6 +151,32 @@
     let qrPollTimer = null;
     let selectedBotId = null;
     let botItems = [];
+    let currentPage = 'overview';
+    function showPage(page, updateAddress = false) {
+      if (!['overview', 'settings', 'history'].includes(page)) page = 'overview';
+      currentPage = page;
+      for (const button of document.querySelectorAll('.nav-button')) {
+        const selected = button.dataset.page === page;
+        button.setAttribute('aria-selected', String(selected));
+        button.tabIndex = selected ? 0 : -1;
+      }
+      for (const panel of document.querySelectorAll('.page')) panel.hidden = panel.id !== `page-${page}`;
+      if (updateAddress && location.hash !== `#${page}`) history.pushState(null, '', `#${page}`);
+      if (page === 'history') loadConversations(true);
+    }
+    document.querySelectorAll('.nav-button').forEach(button => button.addEventListener('click', () => showPage(button.dataset.page, true)));
+    document.querySelector('.main-nav').addEventListener('keydown', event => {
+      const tabs = [...document.querySelectorAll('.nav-button')];
+      const current = tabs.indexOf(document.activeElement);
+      if (current < 0 || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+      tabs[next].focus();
+      showPage(tabs[next].dataset.page, true);
+    });
+    document.querySelectorAll('[data-go]').forEach(button => button.addEventListener('click', () => showPage(button.dataset.go, true)));
+    window.addEventListener('hashchange', () => showPage(location.hash.slice(1)));
+    window.addEventListener('popstate', () => showPage(location.hash.slice(1)));
     const setMessage = (text, error = false) => { message.textContent = text; message.className = `message${error ? ' error' : ''}`; };
     const historyList = document.getElementById('history-list');
     const historyMore = document.getElementById('history-more');
@@ -289,9 +344,10 @@
     document.getElementById('bot-select').addEventListener('change', async event => { selectedBotId = event.target.value || null; await Promise.all([loadSettings(), loadStatus(), loadConversations(true)]); });
     document.getElementById('bot-add').addEventListener('click', async () => { const bot = await api('/api/bots', { method: 'POST', body: JSON.stringify({ name: `QQ 机器人 ${botItems.length + 1}` }) }); await loadBots(bot.botId); await loadStatus(); setMessage('机器人已添加，请扫码绑定。'); });
     document.getElementById('bot-delete').addEventListener('click', async () => { if (!selectedBotId || !confirm('删除当前机器人配置？其会话记录会保留，但机器人将停止连接。')) return; await api('/api/bots/delete', { method: 'POST', body: JSON.stringify({ botId: selectedBotId }) }); selectedBotId = null; await loadBots(); await Promise.all([loadStatus(), loadConversations(true)]); setMessage('机器人已删除。'); });
-    Promise.all([loadBots(), loadStatus(), loadConversations(true)]).catch(error => setMessage(error.message, true));
+    Promise.all([loadBots(), loadStatus()]).catch(error => setMessage(error.message, true));
+    showPage(location.hash.slice(1) || 'overview');
     setInterval(loadStatus, 4000);
-    setInterval(() => { if (!historyViewingOlder) loadConversations(true); }, 10000);
+    setInterval(() => { if (currentPage === 'history' && !historyViewingOlder) loadConversations(true); }, 10000);
   </script>
 </body>
 </html>

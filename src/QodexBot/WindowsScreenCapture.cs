@@ -14,6 +14,7 @@ internal static class WindowsScreenCapture
     private const int SmYVirtualScreen = 77;
     private const int SmCxVirtualScreen = 78;
     private const int SmCyVirtualScreen = 79;
+    private const uint DesktopReadObjects = 0x0001;
     private const uint PwRenderFullContent = 0x00000002;
 
     /// <summary>
@@ -23,6 +24,8 @@ internal static class WindowsScreenCapture
     {
         if (!OperatingSystem.IsWindowsVersionAtLeast(6, 1))
             throw new PlatformNotSupportedException("桌面截图需要 Windows 7 或更高版本。");
+
+        EnsureInputDesktopIsAccessible();
 
         var x = GetSystemMetrics(SmXVirtualScreen);
         var y = GetSystemMetrics(SmYVirtualScreen);
@@ -52,6 +55,8 @@ internal static class WindowsScreenCapture
             throw new PlatformNotSupportedException("进程窗口截图需要 Windows 7 或更高版本。");
         if (string.IsNullOrWhiteSpace(processName))
             throw new ArgumentException("进程名不能为空。", nameof(processName));
+
+        EnsureInputDesktopIsAccessible();
 
         var normalizedName = Path.GetFileNameWithoutExtension(processName.Trim());
         var processes = Process.GetProcessesByName(normalizedName);
@@ -131,6 +136,15 @@ internal static class WindowsScreenCapture
 
     private sealed record WindowCandidate(IntPtr Handle, NativeRect Rect, string Title, long Area);
 
+    private static void EnsureInputDesktopIsAccessible()
+    {
+        var desktop = OpenInputDesktop(0, false, DesktopReadObjects);
+        if (desktop == IntPtr.Zero)
+            throw new InvalidOperationException("无法访问当前 Windows 输入桌面。系统锁屏或会话已断开时，Windows 会阻止普通程序截取桌面；请在已登录且未锁屏的交互桌面中重试。");
+
+        _ = CloseDesktop(desktop);
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeRect
     {
@@ -173,4 +187,11 @@ internal static class WindowsScreenCapture
 
     [DllImport("user32.dll")]
     private static extern int GetSystemMetrics(int index);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr OpenInputDesktop(uint flags, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint desiredAccess);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseDesktop(IntPtr desktop);
 }
